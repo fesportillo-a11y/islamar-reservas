@@ -233,47 +233,77 @@ if seccion == "📊 Reservas":
 
     st.markdown("")
 
-    # Tabla
-    st.markdown(f"### 📋 Listado de reservas ({total})")
+    # Tabla editable
+    st.markdown(f"### 📋 Listado de reservas ({total})  <span style='font-size:0.8rem;color:#888;font-weight:400'>— doble clic en cualquier celda para editar</span>", unsafe_allow_html=True)
 
     if not df_filtrado.empty:
-        cols_mostrar = ["fuente","nombre","dormitorios","entrada","salida",
-                        "noches","personas","precio","estado_pago","mes","comentarios"]
-        cols_exist = [c for c in cols_mostrar if c in df_filtrado.columns]
+        COLS_EDIT = ["fuente","nombre","dormitorios","entrada","salida",
+                     "noches","personas","precio","pago_cta","fecha_ingreso",
+                     "resto_pdte","estado_pago","mes","comentarios"]
+        cols_exist = [c for c in COLS_EDIT if c in df_filtrado.columns]
 
-        df_show = df_filtrado[cols_exist].copy()
-        df_show.columns = [c.upper().replace("_"," ") for c in cols_exist]
+        # Guardamos IDs por separado para actualizar correctamente
+        id_map = df_filtrado["id"].reset_index(drop=True)
+        df_show = df_filtrado[cols_exist].copy().reset_index(drop=True)
 
-        st.dataframe(
+        edited = st.data_editor(
             df_show,
             use_container_width=True,
-            height=500,
+            height=520,
             column_config={
-                "FUENTE": st.column_config.TextColumn("Fuente", width=120),
-                "NOMBRE": st.column_config.TextColumn("Nombre", width=200),
-                "DORMITORIOS": st.column_config.TextColumn("Dorm.", width=70),
-                "ENTRADA": st.column_config.TextColumn("Entrada", width=100),
-                "SALIDA": st.column_config.TextColumn("Salida", width=100),
-                "NOCHES": st.column_config.NumberColumn("Noches", width=70),
-                "PERSONAS": st.column_config.TextColumn("Pers.", width=60),
-                "PRECIO": st.column_config.TextColumn("Precio", width=90),
-                "ESTADO PAGO": st.column_config.TextColumn("Estado pago", width=180),
-                "MES": st.column_config.TextColumn("Mes", width=110),
-                "COMENTARIOS": st.column_config.TextColumn("Comentarios", width=250),
+                "fuente":       st.column_config.SelectboxColumn("Fuente", options=FUENTES, width=130),
+                "nombre":       st.column_config.TextColumn("Nombre", width=200),
+                "dormitorios":  st.column_config.SelectboxColumn("Dorm.", options=DORMS, width=80),
+                "entrada":      st.column_config.TextColumn("Entrada", width=100),
+                "salida":       st.column_config.TextColumn("Salida", width=100),
+                "noches":       st.column_config.NumberColumn("Noches", width=75),
+                "personas":     st.column_config.TextColumn("Pers.", width=65),
+                "precio":       st.column_config.TextColumn("Precio €", width=95),
+                "pago_cta":     st.column_config.TextColumn("Pago cta €", width=100),
+                "fecha_ingreso":st.column_config.TextColumn("F. Ingreso", width=110),
+                "resto_pdte":   st.column_config.TextColumn("Resto pdte €", width=110),
+                "estado_pago":  st.column_config.SelectboxColumn("Estado pago", options=ESTADOS, width=190),
+                "mes":          st.column_config.SelectboxColumn("Mes", options=MESES, width=120),
+                "comentarios":  st.column_config.TextColumn("Comentarios", width=250),
             },
             hide_index=True,
+            num_rows="fixed",
+            key="tabla_editable",
         )
 
-        # Descarga Excel
-        st.markdown("")
-        excel_bytes = exportar_excel(df_filtrado)
-        st.download_button(
-            label="⬇️ Descargar Excel actualizado",
-            data=excel_bytes,
-            file_name=f"Reservas_Islamar_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary",
-        )
+        # Botones
+        col_save, col_dl = st.columns([1, 2])
+        with col_save:
+            if st.button("💾 Guardar cambios", type="primary", use_container_width=True):
+                cambios = 0
+                for i in range(len(edited)):
+                    if not df_show.iloc[i].equals(edited.iloc[i]):
+                        id_r  = int(id_map.iloc[i])
+                        datos = edited.iloc[i].to_dict()
+                        # Recalcular noches si cambiaron fechas
+                        noches = calcular_noches(
+                            str(datos.get("entrada", "")),
+                            str(datos.get("salida", ""))
+                        )
+                        if noches:
+                            datos["noches"] = noches
+                        datos["mes_num"] = mes_num(str(datos.get("mes", "")))
+                        actualizar_reserva(id_r, datos)
+                        cambios += 1
+                if cambios:
+                    st.success(f"✅ {cambios} registro(s) actualizados correctamente.")
+                    st.rerun()
+                else:
+                    st.info("No hay cambios que guardar.")
+        with col_dl:
+            excel_bytes = exportar_excel(df_filtrado)
+            st.download_button(
+                label="⬇️ Descargar Excel actualizado",
+                data=excel_bytes,
+                file_name=f"Reservas_Islamar_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
     else:
         st.info("No hay reservas con los filtros seleccionados.")
 
