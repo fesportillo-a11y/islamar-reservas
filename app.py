@@ -13,7 +13,7 @@ import re
 # CONFIGURACIÓN
 # ─────────────────────────────────────────────
 st.set_page_config(
-    page_title="Apartamentos Islamar – Reservas",
+    page_title="ESTEASUR 2015 - ISLAMAR",
     page_icon="🏖️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -285,7 +285,7 @@ col_logo, col_titulo = st.columns([1, 6])
 with col_logo:
     st.markdown("## 🏖️")
 with col_titulo:
-    st.markdown("# Apartamentos Islamar")
+    st.markdown("# ESTEASUR 2015 - ISLAMAR")
     st.markdown("<span style='color:#888;font-size:0.9rem'>Gestión de Reservas 2026</span>", unsafe_allow_html=True)
 
 st.divider()
@@ -299,7 +299,8 @@ with st.sidebar:
     st.markdown("""
     <div class="sb-logo">
         <span class="sb-logo-icon">🏖️</span>
-        <span class="sb-logo-title">ISLAMAR</span>
+        <span class="sb-logo-title">ESTEASUR 2015</span>
+        <span style="font-size:0.72rem;color:rgba(100,181,246,0.8)!important;letter-spacing:1px;display:block;margin-top:2px;">ISLAMAR</span>
         <span class="sb-logo-sub">Gestión de Reservas</span>
     </div>
     """, unsafe_allow_html=True)
@@ -335,7 +336,7 @@ with st.sidebar:
     <div class="sb-footer">
         📋 {total_res} reservas totales<br>
         🔵 {directas_n} directas &nbsp;·&nbsp; 🟢 {booking_n} Booking<br>
-        <span style="opacity:.5;">Islamar · 2026</span>
+        <span style="opacity:.5;">ESTEASUR 2015 · ISLAMAR · 2026</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -447,7 +448,7 @@ if seccion == "📊 Reservas":
             st.download_button(
                 label="⬇️ Descargar Excel actualizado",
                 data=excel_bytes,
-                file_name=f"Reservas_Islamar_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                file_name=f"Reservas_ESTEASUR_ISLAMAR_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
             )
