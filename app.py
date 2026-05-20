@@ -475,85 +475,229 @@ elif seccion == "✏️ Editar reserva":
 # SECCIÓN: PLANTILLA MENSUAL
 # ─────────────────────────────────────────────
 elif seccion == "📅 Plantilla mensual":
-    st.markdown("### 📅 Plantilla mensual de ocupación")
 
+    # ── Selectores ────────────────────────────
     col_mes, col_anio = st.columns([2, 1])
     with col_mes:
-        mes_sel  = st.selectbox("Mes", MESES, index=datetime.now().month - 1)
+        mes_sel  = st.selectbox("Mes", MESES, index=datetime.now().month - 1, key="pm_mes")
     with col_anio:
-        anio_sel = st.number_input("Año", min_value=2024, max_value=2030, value=2026)
+        anio_sel = int(st.number_input("Año", min_value=2024, max_value=2030, value=2026, key="pm_anio"))
 
-    mes_n  = MESES.index(mes_sel) + 1
-    n_dias = calendar.monthrange(anio_sel, mes_n)[1]
-    dias   = list(range(1, n_dias + 1))
+    mes_n      = MESES.index(mes_sel) + 1
+    n_dias     = calendar.monthrange(anio_sel, mes_n)[1]
+    dias       = list(range(1, n_dias + 1))
+    primer_dia = date(anio_sel, mes_n, 1).weekday()   # 0=Lunes
+    DIAS_SEM   = ["L","M","X","J","V","S","D"]
 
-    # Construir grid {apto: {day: (nombre, fuente)}}
-    grid    = {apto: {d: ("", "") for d in dias} for apto in APTOS}
-
+    # ── Construir grid ────────────────────────
+    grid = {apto: {d: None for d in dias} for apto in APTOS}
     for _, r in df.iterrows():
         try:
-            entrada = datetime.strptime(str(r.get("entrada", "")), "%d/%m/%Y").date()
-            salida  = datetime.strptime(str(r.get("salida",  "")), "%d/%m/%Y").date()
-            apto    = str(r.get("apartamento", "")).strip()
-            nombre  = str(r.get("nombre", ""))
-            fuente  = str(r.get("fuente", ""))
+            entrada = datetime.strptime(str(r.get("entrada","")), "%d/%m/%Y").date()
+            salida  = datetime.strptime(str(r.get("salida", "")), "%d/%m/%Y").date()
+            apto    = str(r.get("apartamento","")).strip()
             if apto not in APTOS:
                 continue
+            edia = entrada.day if entrada.month == mes_n and entrada.year == anio_sel else 0
+            sdia = salida.day  if salida.month  == mes_n and salida.year  == anio_sel else n_dias + 1
             for d in dias:
                 curr = date(anio_sel, mes_n, d)
                 if entrada <= curr < salida:
-                    grid[apto][d] = (nombre[:13], fuente)
+                    grid[apto][d] = {
+                        "id": r.get("id"), "nombre": str(r.get("nombre","")),
+                        "fuente": str(r.get("fuente","")),
+                        "entrada": str(r.get("entrada","")), "salida": str(r.get("salida","")),
+                        "precio": str(r.get("precio","")), "estado_pago": str(r.get("estado_pago","")),
+                        "edia": edia, "sdia": sdia,
+                    }
         except:
             pass
 
-    # Leyenda
-    st.markdown(
-        '<span style="background:#D6E4F0;padding:3px 10px;border-radius:4px;font-size:0.8rem;margin-right:8px;">■ Reserva directa</span>'
-        '<span style="background:#C8E6C9;padding:3px 10px;border-radius:4px;font-size:0.8rem;">■ Booking.com</span>',
-        unsafe_allow_html=True,
-    )
-    st.markdown("")
+    # ── CSS ───────────────────────────────────
+    st.markdown("""
+    <style>
+    .cal-wrap{overflow-x:auto;border-radius:10px;box-shadow:0 3px 12px rgba(0,0,0,0.15);margin-bottom:8px;}
+    .cal-tbl{border-collapse:collapse;font-family:'Segoe UI',Arial,sans-serif;width:100%;}
+    .th-apto{background:#1a3f5c;color:white;padding:6px 14px;text-align:left;font-size:0.73rem;
+             position:sticky;left:0;z-index:3;white-space:nowrap;min-width:155px;
+             border-right:2px solid #0d2a3d;border-bottom:1px solid #0d2a3d;}
+    .th-mes{background:linear-gradient(135deg,#1F4E79,#2C5F8A);color:white;text-align:center;
+            font-size:1rem;font-weight:700;padding:9px;letter-spacing:2px;}
+    .th-day{background:#1F4E79;color:white;padding:3px 1px;text-align:center;
+            font-size:0.7rem;min-width:33px;border:1px solid #144070;line-height:1.2;}
+    .th-day.we{background:#163d5e;}
+    .dow{font-size:0.58rem;color:#90CAF9;display:block;}
+    .td-apto{background:#2C5F8A;color:white;font-weight:700;padding:5px 14px;white-space:nowrap;
+             font-size:0.78rem;position:sticky;left:0;z-index:1;
+             border-right:2px solid #144070;border-bottom:1px solid #1a4a72;}
+    .td{padding:0;border:1px solid #dde2ea;height:30px;vertical-align:middle;overflow:hidden;cursor:pointer;}
+    .td.we{background:#f0f2f5 !important;}
+    .td.libre{background:#fafbfd;}
+    .res{display:block;height:100%;line-height:30px;padding:0 4px;font-size:0.67rem;
+         font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .sep td{background:#D0E8F7;color:#1F4E79;font-weight:700;padding:4px 10px;
+            font-size:0.78rem;border-top:2px solid #1F4E79;letter-spacing:.5px;}
+    </style>
+    """, unsafe_allow_html=True)
 
-    # Estilos de celda
-    TH  = "background:#1F4E79;color:white;padding:4px 2px;text-align:center;font-size:0.72rem;border:1px solid #144070;min-width:27px;"
-    TH_APTO = "background:#1F4E79;color:white;padding:4px 10px;text-align:left;font-size:0.72rem;border:1px solid #144070;min-width:150px;white-space:nowrap;"
-    TD_APTO = "background:#2C5F8A;color:white;font-weight:bold;padding:4px 10px;white-space:nowrap;font-size:0.78rem;border:1px solid #144070;"
-    TD_SEP  = "background:#BDD7EE;color:#1F4E79;font-weight:bold;padding:4px 8px;font-size:0.78rem;border-top:2px solid #1F4E79;"
+    # ── HTML calendario ───────────────────────
+    html = '<div class="cal-wrap"><table class="cal-tbl">'
 
-    html = '<div style="overflow-x:auto;"><table style="border-collapse:collapse;font-family:Calibri,sans-serif;">'
-
-    # Cabecera días
-    html += f'<tr><th style="{TH_APTO}">APARTAMENTO</th>'
+    # Fila título
+    html += f'<tr><th class="th-apto" style="font-size:0.88rem;font-weight:700;">{mes_sel} {anio_sel}</th>'
     for d in dias:
-        html += f'<th style="{TH}">{d}</th>'
+        wd  = (primer_dia + d - 1) % 7
+        we  = " we" if wd >= 5 else ""
+        html += f'<th class="th-day{we}">{d}<span class="dow">{DIAS_SEM[wd]}</span></th>'
     html += '</tr>'
 
-    # Filas de apartamentos
+    # Filas apartamentos
     for i, apto in enumerate(APTOS):
-        # Separador antes de los apartamentos de Juanma
         if apto == "ESTUDIO 105":
-            html += f'<tr><td colspan="{n_dias+1}" style="{TD_SEP}">JUANMA</td></tr>'
+            html += f'<tr class="sep"><td colspan="{n_dias+1}">▸ JUANMA</td></tr>'
 
-        row_bg = "#EEF4FA" if i % 2 == 0 else "#FFFFFF"
-        html += f'<tr><td style="{TD_APTO}">{apto}</td>'
+        rbg = "#f5f8fc" if i % 2 == 0 else "#ffffff"
+        html += f'<tr><td class="td-apto">{apto}</td>'
 
         for d in dias:
-            nombre, fuente = grid[apto][d]
-            if fuente == "DIRECTA":
-                bg, fg = "#D6E4F0", "#0D47A1"
-            elif fuente == "BOOKING.COM":
-                bg, fg = "#C8E6C9", "#1B5E20"
-            elif nombre:
-                bg, fg = "#E1BEE7", "#4A148C"
-            else:
-                bg, fg = row_bg, "#555"
+            c   = grid[apto][d]
+            wd  = (primer_dia + d - 1) % 7
+            wec = " we" if wd >= 5 else ""
 
-            html += (
-                f'<td title="{nombre}" style="background:{bg};color:{fg};'
-                f'text-align:center;padding:2px 1px;border:1px solid #ddd;'
-                f'font-size:0.62rem;overflow:hidden;">{nombre}</td>'
-            )
+            if c:
+                f   = c["fuente"]
+                bg  = "#1565C0" if f == "DIRECTA" else ("#2E7D32" if f == "BOOKING.COM" else "#6A1B9A")
+                nom = c["nombre"]
+                tip = f"{nom} | {c['entrada']} → {c['salida']}"
+                pre = "▶ " if d == c["edia"] else ""
+                suf = " ◀" if d == c["sdia"] - 1 and 0 < c["sdia"] <= n_dias + 1 else ""
+                lbl = f"{pre}{nom}{suf}"
+                html += (f'<td class="td{wec}" style="background:{bg};" title="{tip}">'
+                         f'<span class="res" style="color:white;">{lbl}</span></td>')
+            else:
+                fbg = "#eaecef" if wd >= 5 else rbg
+                html += f'<td class="td libre{wec}" style="background:{fbg};"></td>'
+
         html += '</tr>'
 
     html += '</table></div>'
+
+    # ── Leyenda ───────────────────────────────
+    st.markdown("""
+    <div style="display:flex;gap:14px;align-items:center;font-size:0.78rem;margin-bottom:6px;flex-wrap:wrap;">
+      <span style="color:#888;">▶ Entrada &nbsp;|&nbsp; ◀ Salida &nbsp;|&nbsp; Gris = fin de semana</span>
+      <span style="background:#1565C0;color:white;padding:2px 12px;border-radius:12px;">■ Directa</span>
+      <span style="background:#2E7D32;color:white;padding:2px 12px;border-radius:12px;">■ Booking.com</span>
+    </div>
+    """, unsafe_allow_html=True)
+
     st.markdown(html, unsafe_allow_html=True)
+
+    # ── Panel interactivo ─────────────────────
+    st.divider()
+    st.markdown("### 🔍 Consultar · editar · crear reserva")
+
+    pi_c1, pi_c2 = st.columns([2, 2])
+    with pi_c1:
+        apto_pi  = st.selectbox("Apartamento", [""] + APTOS, key="pi_apto")
+    with pi_c2:
+        fecha_pi = st.date_input(
+            "Fecha", value=date(anio_sel, mes_n, 1),
+            min_value=date(anio_sel, mes_n, 1),
+            max_value=date(anio_sel, mes_n, n_dias),
+            format="DD/MM/YYYY", key="pi_fecha",
+        )
+
+    if apto_pi:
+        d_sel  = fecha_pi.day
+        celda  = grid.get(apto_pi, {}).get(d_sel)
+
+        if celda:
+            badge = "🔵 Directa" if celda["fuente"] == "DIRECTA" else "🟢 Booking.com"
+            st.success(f"**{apto_pi}** — {fecha_pi.strftime('%d/%m/%Y')}: **{celda['nombre']}** &nbsp; {badge}")
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Entrada", celda["entrada"])
+            m2.metric("Salida",  celda["salida"])
+            m3.metric("Precio",  f"{celda['precio']} €" if celda["precio"] else "—")
+            m4.metric("Estado",  celda["estado_pago"] or "—")
+
+            with st.expander("✏️ Editar esta reserva", expanded=False):
+                r_data = df[df["id"] == celda["id"]]
+                if not r_data.empty:
+                    rv = r_data.iloc[0]
+                    def parse_d(s):
+                        try: return datetime.strptime(str(s), "%d/%m/%Y").date()
+                        except: return None
+                    with st.form("form_plant_edit"):
+                        pe1, pe2 = st.columns(2)
+                        with pe1:
+                            pf  = st.selectbox("Fuente", FUENTES, index=FUENTES.index(rv["fuente"]) if rv["fuente"] in FUENTES else 0)
+                            pn  = st.text_input("Nombre *", value=str(rv.get("nombre","")))
+                            pa_opts = [""] + APTOS
+                            pa  = st.selectbox("Apartamento", pa_opts, index=pa_opts.index(apto_pi) if apto_pi in pa_opts else 0)
+                            pm_v = str(rv.get("mes","")).upper()
+                            pm  = st.selectbox("Mes", MESES, index=MESES.index(pm_v) if pm_v in MESES else 0)
+                        with pe2:
+                            pe_in  = st.date_input("Entrada", value=parse_d(rv.get("entrada")), format="DD/MM/YYYY")
+                            pe_out = st.date_input("Salida",  value=parse_d(rv.get("salida")),  format="DD/MM/YYYY")
+                            pp  = st.text_input("Precio €", value=str(rv.get("precio","")))
+                            pst_v = str(rv.get("estado_pago",""))
+                            pst = st.selectbox("Estado pago", ESTADOS, index=ESTADOS.index(pst_v) if pst_v in ESTADOS else 0)
+                        pcom = st.text_area("Comentarios", value=str(rv.get("comentarios","")), height=60)
+                        sc2, sd2 = st.columns([3,1])
+                        with sc2: psave = st.form_submit_button("💾 Guardar", type="primary", use_container_width=True)
+                        with sd2: pdel  = st.form_submit_button("🗑️ Eliminar", use_container_width=True)
+
+                    if psave:
+                        e2 = pe_in.strftime("%d/%m/%Y")  if pe_in  else ""
+                        s2 = pe_out.strftime("%d/%m/%Y") if pe_out else ""
+                        actualizar_reserva(celda["id"], {
+                            "fuente": pf, "nombre": pn, "apartamento": pa,
+                            "mes": pm, "mes_num": mes_num(pm),
+                            "entrada": e2, "salida": s2,
+                            "noches": (pe_out - pe_in).days if pe_in and pe_out else 0,
+                            "precio": pp, "estado_pago": pst, "comentarios": pcom,
+                        })
+                        st.success("✅ Reserva actualizada.")
+                        st.rerun()
+                    if pdel:
+                        eliminar_reserva(celda["id"])
+                        st.success("🗑️ Reserva eliminada.")
+                        st.rerun()
+        else:
+            st.info(f"**{apto_pi}** está libre el {fecha_pi.strftime('%d/%m/%Y')}.")
+            with st.expander("➕ Crear reserva aquí", expanded=True):
+                with st.form("form_plant_new", clear_on_submit=True):
+                    nn1, nn2 = st.columns(2)
+                    with nn1:
+                        nf  = st.selectbox("Fuente *", FUENTES, key="nf")
+                        nn  = st.text_input("Nombre del cliente *")
+                        na_opts = [""] + APTOS
+                        na  = st.selectbox("Apartamento *", na_opts, index=na_opts.index(apto_pi) if apto_pi in na_opts else 0)
+                        nm  = st.selectbox("Mes *", MESES, index=mes_n - 1)
+                    with nn2:
+                        ni  = st.date_input("Entrada *", value=fecha_pi, format="DD/MM/YYYY")
+                        no  = st.date_input("Salida *",  value=None,     format="DD/MM/YYYY")
+                        np_ = st.text_input("Precio €")
+                        nst = st.selectbox("Estado pago", ESTADOS, key="nst")
+                    ncom = st.text_area("Comentarios", height=60)
+                    nsub = st.form_submit_button("💾 Guardar reserva", type="primary", use_container_width=True)
+
+                if nsub:
+                    if not nn:
+                        st.error("El nombre es obligatorio.")
+                    elif not ni or not no:
+                        st.error("Las fechas son obligatorias.")
+                    elif no <= ni:
+                        st.error("La salida debe ser posterior a la entrada.")
+                    else:
+                        guardar_reserva({
+                            "fuente": nf, "nombre": nn, "apartamento": na,
+                            "mes": nm, "mes_num": mes_num(nm),
+                            "entrada": ni.strftime("%d/%m/%Y"),
+                            "salida":  no.strftime("%d/%m/%Y"),
+                            "noches":  (no - ni).days,
+                            "precio": np_, "estado_pago": nst, "comentarios": ncom,
+                        })
+                        st.success(f"✅ Reserva de **{nn}** en **{na}** guardada.")
+                        st.rerun()
