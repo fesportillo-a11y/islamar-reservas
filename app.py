@@ -150,20 +150,129 @@ def exportar_excel(df: pd.DataFrame) -> bytes:
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
-[data-testid="stAppViewContainer"] { background: #f5f7fa; }
-[data-testid="stSidebar"] { background: #1F4E79; }
-[data-testid="stSidebar"] * { color: white !important; }
-[data-testid="stSidebar"] .stSelectbox label,
-[data-testid="stSidebar"] .stMultiSelect label { color: #BDD7EE !important; }
-.metric-card {
-    background: white; border-radius: 10px; padding: 16px 20px;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.08); text-align: center;
+/* ── Fondo general ── */
+[data-testid="stAppViewContainer"] { background: #f0f4f8; }
+
+/* ══════════════════════════════════════
+   SIDEBAR
+══════════════════════════════════════ */
+[data-testid="stSidebar"] {
+    background: linear-gradient(170deg, #071a2e 0%, #0f2f52 45%, #1a4370 100%) !important;
+    border-right: 1px solid rgba(100,181,246,0.10) !important;
 }
-.metric-num  { font-size: 2rem; font-weight: 700; color: #1F4E79; }
-.metric-lab  { font-size: 0.85rem; color: #666; margin-top: 2px; }
-.badge-directa { background:#D6E4F0; color:#1F4E79; padding:2px 8px; border-radius:12px; font-size:0.8rem; font-weight:600; }
-.badge-booking { background:#E8F5E9; color:#2E7D32; padding:2px 8px; border-radius:12px; font-size:0.8rem; font-weight:600; }
-.stDataFrame { border-radius: 8px; overflow: hidden; }
+[data-testid="stSidebar"] * { color: rgba(255,255,255,0.82) !important; }
+
+/* Logo */
+.sb-logo {
+    text-align: center;
+    padding: 24px 12px 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+    margin-bottom: 4px;
+}
+.sb-logo-icon { font-size: 2.6rem; line-height: 1; display: block; }
+.sb-logo-title {
+    font-size: 1.18rem; font-weight: 800; color: white !important;
+    letter-spacing: 3px; margin-top: 8px; display: block;
+}
+.sb-logo-sub {
+    font-size: 0.65rem; color: rgba(100,181,246,0.65) !important;
+    letter-spacing: 2px; margin-top: 3px; display: block; text-transform: uppercase;
+}
+
+/* Etiqueta de sección */
+.sb-label {
+    font-size: 0.58rem; font-weight: 700; letter-spacing: 2.5px;
+    color: rgba(100,181,246,0.55) !important;
+    padding: 16px 18px 5px; text-transform: uppercase; display: block;
+}
+
+/* ── Navegación: radio → botones ── */
+[data-testid="stSidebar"] .stRadio > div[role="radiogroup"] { gap: 1px !important; }
+[data-testid="stSidebar"] .stRadio > label { display: none !important; }
+
+[data-testid="stSidebar"] .stRadio label {
+    display: flex !important;
+    align-items: center !important;
+    padding: 10px 18px !important;
+    border-radius: 9px !important;
+    margin: 1px 10px !important;
+    cursor: pointer !important;
+    font-size: 0.875rem !important;
+    font-weight: 500 !important;
+    color: rgba(255,255,255,0.65) !important;
+    border-left: 3px solid transparent !important;
+    transition: all 0.18s ease !important;
+    background: transparent !important;
+}
+[data-testid="stSidebar"] .stRadio label > div:first-child {
+    display: none !important;
+}
+[data-testid="stSidebar"] .stRadio label > div:last-child {
+    margin-left: 0 !important;
+}
+[data-testid="stSidebar"] .stRadio label:hover {
+    background: rgba(255,255,255,0.06) !important;
+    color: rgba(255,255,255,0.92) !important;
+    border-left-color: rgba(100,181,246,0.35) !important;
+}
+[data-testid="stSidebar"] .stRadio label:has(input:checked) {
+    background: rgba(100,181,246,0.14) !important;
+    color: white !important;
+    font-weight: 700 !important;
+    border-left: 3px solid #64B5F6 !important;
+    box-shadow: inset 0 0 0 1px rgba(100,181,246,0.12) !important;
+}
+
+/* ── Filtros ── */
+[data-testid="stSidebar"] .stMultiSelect > label,
+[data-testid="stSidebar"] .stTextInput > label {
+    font-size: 0.68rem !important;
+    color: rgba(255,255,255,0.45) !important;
+    letter-spacing: 1px !important;
+    text-transform: uppercase !important;
+    margin-bottom: 2px !important;
+}
+[data-testid="stSidebar"] .stMultiSelect [data-baseweb="select"] > div,
+[data-testid="stSidebar"] .stTextInput input {
+    background: rgba(255,255,255,0.05) !important;
+    border: 1px solid rgba(255,255,255,0.10) !important;
+    border-radius: 7px !important;
+    color: white !important;
+    font-size: 0.82rem !important;
+}
+[data-testid="stSidebar"] .stMultiSelect [data-baseweb="tag"] {
+    background: rgba(100,181,246,0.25) !important;
+    border-radius: 5px !important;
+}
+[data-testid="stSidebar"] hr {
+    border-color: rgba(255,255,255,0.07) !important;
+    margin: 6px 0 !important;
+}
+
+/* Pie del sidebar */
+.sb-footer {
+    margin-top: 20px;
+    padding: 12px 16px;
+    border-top: 1px solid rgba(255,255,255,0.07);
+    font-size: 0.68rem;
+    color: rgba(255,255,255,0.28) !important;
+    text-align: center;
+    line-height: 1.8;
+}
+
+/* ══════════════════════════════════════
+   CONTENIDO PRINCIPAL
+══════════════════════════════════════ */
+.metric-card {
+    background: white; border-radius: 12px; padding: 18px 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.07); text-align: center;
+    border-top: 3px solid #1F4E79;
+}
+.metric-num  { font-size: 2rem; font-weight: 800; color: #1F4E79; }
+.metric-lab  { font-size: 0.82rem; color: #888; margin-top: 3px; }
+.badge-directa { background:#D6E4F0; color:#1F4E79; padding:2px 9px; border-radius:12px; font-size:0.78rem; font-weight:600; }
+.badge-booking { background:#E8F5E9; color:#2E7D32; padding:2px 9px; border-radius:12px; font-size:0.78rem; font-weight:600; }
+.stDataFrame { border-radius: 10px; overflow: hidden; }
 h1 { color: #1F4E79 !important; }
 h2, h3 { color: #2C5F8A !important; }
 </style>
@@ -177,28 +286,58 @@ with col_logo:
     st.markdown("## 🏖️")
 with col_titulo:
     st.markdown("# Apartamentos Islamar")
-    st.markdown("<span style='color:#666;font-size:0.9rem'>Gestión de Reservas 2026</span>", unsafe_allow_html=True)
+    st.markdown("<span style='color:#888;font-size:0.9rem'>Gestión de Reservas 2026</span>", unsafe_allow_html=True)
 
 st.divider()
 
 # ─────────────────────────────────────────────
-# SIDEBAR – FILTROS + NAVEGACIÓN
+# SIDEBAR
 # ─────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("### 🔍 Filtros")
+
+    # Logo
+    st.markdown("""
+    <div class="sb-logo">
+        <span class="sb-logo-icon">🏖️</span>
+        <span class="sb-logo-title">ISLAMAR</span>
+        <span class="sb-logo-sub">Gestión de Reservas</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Navegación
+    st.markdown('<span class="sb-label">Navegación</span>', unsafe_allow_html=True)
+    seccion = st.radio("nav", [
+        "📊 Reservas",
+        "📅 Plantilla mensual",
+        "📥 Importar Booking",
+        "➕ Nueva reserva",
+        "✏️ Editar reserva",
+    ], label_visibility="collapsed")
+
+    # Filtros
+    st.markdown('<span class="sb-label">Filtros</span>', unsafe_allow_html=True)
     filtro_mes    = st.multiselect("Mes", MESES, placeholder="Todos los meses")
     filtro_fuente = st.multiselect("Fuente", FUENTES, placeholder="Todas las fuentes")
-    filtro_nombre = st.text_input("Buscar nombre")
+    filtro_nombre = st.text_input("Buscar nombre", placeholder="Nombre del cliente...")
     filtro_dorm   = st.multiselect("Dormitorios", DORMS, placeholder="Todos")
-
-    st.divider()
-    st.markdown("### 📋 Sección")
-    seccion = st.radio("", ["📊 Reservas", "➕ Nueva reserva", "✏️ Editar reserva", "📅 Plantilla mensual", "📥 Importar Booking"], label_visibility="collapsed")
 
 # ─────────────────────────────────────────────
 # CARGAR DATOS
 # ─────────────────────────────────────────────
 df = cargar_reservas()
+
+# Pie del sidebar con estadísticas
+with st.sidebar:
+    total_res   = len(df) if not df.empty else 0
+    directas_n  = len(df[df["fuente"] == "DIRECTA"]) if not df.empty else 0
+    booking_n   = len(df[df["fuente"] == "BOOKING.COM"]) if not df.empty else 0
+    st.markdown(f"""
+    <div class="sb-footer">
+        📋 {total_res} reservas totales<br>
+        🔵 {directas_n} directas &nbsp;·&nbsp; 🟢 {booking_n} Booking<br>
+        <span style="opacity:.5;">Islamar · 2026</span>
+    </div>
+    """, unsafe_allow_html=True)
 
 if df.empty:
     st.warning("⚠️ No hay reservas cargadas. Añade la primera desde '➕ Nueva reserva'.")
