@@ -281,12 +281,11 @@ h2, h3 { color: #2C5F8A !important; }
 # ─────────────────────────────────────────────
 # CABECERA
 # ─────────────────────────────────────────────
-col_logo, col_titulo = st.columns([1, 5])
-with col_logo:
-    st.image("logo.png", width=90)
-with col_titulo:
-    st.markdown("# ESTEASUR 2015 - ISLAMAR")
-    st.markdown("<span style='color:#888;font-size:0.9rem'>Gestión de Reservas · Apartamentos Islamar · 2026</span>", unsafe_allow_html=True)
+st.markdown("# ESTEASUR 2015 - ISLAMAR")
+st.markdown("<span style='color:#888;font-size:0.9rem'>Gestión de Reservas · Apartamentos Islamar · 2026</span>", unsafe_allow_html=True)
+col_c1, col_c2, col_c3 = st.columns([2, 1, 2])
+with col_c2:
+    st.image("logo.png", width=120)
 
 st.divider()
 
