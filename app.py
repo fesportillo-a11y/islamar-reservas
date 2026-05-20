@@ -193,7 +193,7 @@ with st.sidebar:
 
     st.divider()
     st.markdown("### 📋 Sección")
-    seccion = st.radio("", ["📊 Reservas", "➕ Nueva reserva", "✏️ Editar reserva", "📅 Plantilla mensual"], label_visibility="collapsed")
+    seccion = st.radio("", ["📊 Reservas", "➕ Nueva reserva", "✏️ Editar reserva", "📅 Plantilla mensual", "📥 Importar Booking"], label_visibility="collapsed")
 
 # ─────────────────────────────────────────────
 # CARGAR DATOS
@@ -701,3 +701,170 @@ elif seccion == "📅 Plantilla mensual":
                         })
                         st.success(f"✅ Reserva de **{nn}** en **{na}** guardada.")
                         st.rerun()
+
+# ─────────────────────────────────────────────
+# SECCIÓN: IMPORTAR BOOKING
+# ─────────────────────────────────────────────
+elif seccion == "📥 Importar Booking":
+    st.markdown("### 📥 Importar reservas desde Booking.com")
+    st.markdown("Sube el Excel de **Check-in** que descarga Booking.com y se importarán automáticamente las reservas nuevas.")
+
+    archivo = st.file_uploader("Selecciona el archivo Excel de Booking.com", type=["xls","xlsx"], key="bk_upload")
+
+    if archivo:
+        try:
+            bk = pd.read_excel(archivo, header=0)
+            bk.columns = [str(c).strip() for c in bk.columns]
+
+            # Mapeo de columnas Booking → nuestra BD
+            COL_MAP = {
+                "nro_reserva":  ["Número de reserva", "Numero de reserva"],
+                "nombre":       ["Nombre del cliente (o clientes)", "Nombre del cliente"],
+                "entrada":      ["Entrada"],
+                "salida":       ["Salida"],
+                "noches":       ["Duración (noches)", "Duracion (noches)"],
+                "personas":     ["Personas", "Adultos"],
+                "precio":       ["Precio"],
+                "estado_pago":  ["Estado del pago"],
+                "comentarios":  ["Comentarios"],
+                "tipo_unidad":  ["Tipo de unidad"],
+            }
+
+            def get_col(df_bk, opciones):
+                for op in opciones:
+                    for c in df_bk.columns:
+                        if op.lower() in c.lower():
+                            return c
+                return None
+
+            def limpiar_precio(v):
+                try:
+                    return str(v).replace("EUR","").replace("€","").strip().replace(",",".")
+                except:
+                    return ""
+
+            def fmt_fecha(v):
+                try:
+                    if isinstance(v, str):
+                        d = datetime.strptime(v.strip()[:10], "%Y-%m-%d")
+                    else:
+                        d = pd.Timestamp(v).to_pydatetime()
+                    return d.strftime("%d/%m/%Y")
+                except:
+                    return str(v)
+
+            # Construir dataframe normalizado
+            filas = []
+            for _, row in bk.iterrows():
+                def g(key):
+                    c = get_col(bk, COL_MAP.get(key,[]))
+                    return row[c] if c and not pd.isna(row.get(c, float("nan"))) else ""
+
+                nro   = str(g("nro_reserva")).strip()
+                if not nro or nro in ("nan",""):
+                    continue
+
+                entrada_raw = g("entrada")
+                salida_raw  = g("salida")
+                entrada_str = fmt_fecha(entrada_raw)
+                salida_str  = fmt_fecha(salida_raw)
+
+                try:
+                    e_date = datetime.strptime(entrada_str, "%d/%m/%Y")
+                    mes_n2 = e_date.month
+                    mes_str = MESES[mes_n2 - 1]
+                except:
+                    mes_n2, mes_str = 0, ""
+
+                precio_raw = limpiar_precio(g("precio"))
+                noches_raw = g("noches")
+                try:
+                    noches_val = int(float(str(noches_raw))) if noches_raw != "" else 0
+                except:
+                    noches_val = calcular_noches(entrada_str, salida_str)
+
+                estado_raw = str(g("estado_pago")).strip()
+                if "booking" in estado_raw.lower():
+                    estado_val = "Pago mediante Booking.com"
+                elif estado_raw.lower() in ("ok","pagado"):
+                    estado_val = "PAGADO"
+                else:
+                    estado_val = estado_raw
+
+                filas.append({
+                    "nro_reserva":  nro,
+                    "fuente":       "BOOKING.COM",
+                    "nombre":       str(g("nombre")).strip().title(),
+                    "mes":          mes_str,
+                    "mes_num":      mes_n2,
+                    "entrada":      entrada_str,
+                    "salida":       salida_str,
+                    "noches":       noches_val,
+                    "personas":     str(g("personas")).replace(".0",""),
+                    "precio":       precio_raw,
+                    "estado_pago":  estado_val,
+                    "comentarios":  str(g("comentarios")) if g("comentarios") else "",
+                    "apartamento":  "",
+                })
+
+            df_bk = pd.DataFrame(filas)
+
+            # Detectar duplicados (nro_reserva ya en BD)
+            nros_bd = set(str(r) for r in df["nro_reserva"].tolist()) if not df.empty else set()
+            df_bk["_nuevo"] = ~df_bk["nro_reserva"].astype(str).isin(nros_bd)
+            nuevas   = df_bk[df_bk["_nuevo"]].drop(columns=["_nuevo"])
+            ya_exist = df_bk[~df_bk["_nuevo"]].drop(columns=["_nuevo"])
+
+            # Resumen
+            col_r1, col_r2, col_r3 = st.columns(3)
+            col_r1.metric("Reservas en el archivo", len(df_bk))
+            col_r2.metric("✅ Nuevas a importar",   len(nuevas),   delta=f"+{len(nuevas)}")
+            col_r3.metric("⚠️ Ya existentes",       len(ya_exist))
+
+            # Vista previa
+            if not nuevas.empty:
+                st.markdown("#### Vista previa de reservas nuevas")
+                cols_vista = ["nro_reserva","nombre","entrada","salida","noches","personas","precio","estado_pago"]
+                st.dataframe(
+                    nuevas[[c for c in cols_vista if c in nuevas.columns]],
+                    use_container_width=True, height=300, hide_index=True,
+                    column_config={
+                        "nro_reserva":  st.column_config.TextColumn("Nº Reserva", width=130),
+                        "nombre":       st.column_config.TextColumn("Nombre", width=200),
+                        "entrada":      st.column_config.TextColumn("Entrada", width=100),
+                        "salida":       st.column_config.TextColumn("Salida", width=100),
+                        "noches":       st.column_config.NumberColumn("Noches", width=70),
+                        "personas":     st.column_config.TextColumn("Pers.", width=60),
+                        "precio":       st.column_config.TextColumn("Precio €", width=90),
+                        "estado_pago":  st.column_config.TextColumn("Estado pago", width=200),
+                    },
+                )
+
+                st.markdown("")
+                if st.button(f"📥 Importar {len(nuevas)} reserva(s) nueva(s)", type="primary", use_container_width=True):
+                    importadas = 0
+                    errores_imp = []
+                    for _, row in nuevas.iterrows():
+                        try:
+                            guardar_reserva(row.to_dict())
+                            importadas += 1
+                        except Exception as ex:
+                            errores_imp.append(str(ex))
+
+                    if importadas:
+                        st.success(f"✅ {importadas} reserva(s) importadas correctamente.")
+                        st.rerun()
+                    for err in errores_imp:
+                        st.error(f"Error: {err}")
+            else:
+                st.info("✅ Todas las reservas del archivo ya están en la base de datos. No hay nada nuevo que importar.")
+
+            if not ya_exist.empty:
+                with st.expander(f"Ver {len(ya_exist)} reserva(s) ya existentes"):
+                    st.dataframe(
+                        ya_exist[["nro_reserva","nombre","entrada","salida"]],
+                        use_container_width=True, hide_index=True,
+                    )
+
+        except Exception as e:
+            st.error(f"Error al procesar el archivo: {e}")
