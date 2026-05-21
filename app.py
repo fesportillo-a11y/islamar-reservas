@@ -1137,13 +1137,15 @@ elif seccion == "📅 Plantilla mensual":
     with tab_edit:
         st.markdown(
             "<div style='font-size:0.84rem;color:#555;padding:4px 0 10px;'>"
-            "✏️ Edita directamente las celdas: <b>renombra</b> huéspedes, <b>mueve</b> reservas entre "
-            "apartamentos escribiendo el nombre en la nueva fila y borrando la antigua, o <b>crea</b> nuevas "
-            "reservas rellenando celdas vacías. Pulsa <b>💾 Guardar cambios</b> para confirmar.</div>",
+            "✏️ <b>Doble clic</b> en una celda para editar. "
+            "<b>Renombra</b> el huésped cambiando el texto. "
+            "<b>Mueve</b> una reserva vaciando su celda y escribiendo el nombre en la nueva fila (mismo día). "
+            "<b>Crea</b> una nueva reserva escribiendo en una celda vacía. "
+            "Pulsa <b>💾 Guardar cambios</b> al terminar.</div>",
             unsafe_allow_html=True,
         )
 
-        # ── Construir DataFrame editable ──────
+        # ── Construir DataFrame base desde la BD ───
         rows_edit = []
         for apto in APTOS:
             row = {"Apartamento": apto}
@@ -1151,31 +1153,24 @@ elif seccion == "📅 Plantilla mensual":
                 celda = grid[apto][d]
                 row[str(d)] = celda["nombre"] if celda else ""
             rows_edit.append(row)
+        df_base = pd.DataFrame(rows_edit)   # referencia limpia de la BD actual
 
-        df_editgrid = pd.DataFrame(rows_edit)
-        day_cols    = [str(d) for d in dias]
-
-        # ── Config columnas ───────────────────
+        # ── Config columnas ────────────────────────
         col_cfg_edit = {
             "Apartamento": st.column_config.TextColumn("Apartamento", width=160, disabled=True),
         }
         for d in dias:
             wd = (primer_dia + d - 1) % 7
-            sem_lbl = DIAS_SEM[wd]
             col_cfg_edit[str(d)] = st.column_config.TextColumn(
-                f"{d}",
-                width=90,
-                help=f"Día {d} — {sem_lbl}{'  🔘 fin de semana' if wd >= 5 else ''}",
+                str(d),
+                width=85,
+                help=f"Día {d} — {DIAS_SEM[wd]}{'  (fin de semana)' if wd >= 5 else ''}",
             )
 
-        # ── Guardar estado original por mes/año/versión ──
-        orig_key = f"po_{mes_sel}_{anio_sel}_{st.session_state.edit_ver}"
-        if orig_key not in st.session_state:
-            st.session_state[orig_key] = df_editgrid.copy()
-
-        # ── Data editor ───────────────────────
+        # ── Data editor ────────────────────────────
+        # La clave cambia tras cada guardado para resetear el estado interno
         edited_grid = st.data_editor(
-            df_editgrid,
+            df_base,
             use_container_width=True,
             height=600,
             column_config=col_cfg_edit,
@@ -1185,100 +1180,106 @@ elif seccion == "📅 Plantilla mensual":
             key=f"ged_{mes_sel}_{anio_sel}_{st.session_state.edit_ver}",
         )
 
-        # ── Botones ───────────────────────────
+        # ── Botones ────────────────────────────────
         btn1, btn2, _ = st.columns([1, 1, 4])
         with btn1:
             guardar_grid = st.button("💾 Guardar cambios", type="primary", use_container_width=True)
         with btn2:
             if st.button("↺ Descartar", use_container_width=True):
-                st.session_state.pop(orig_key, None)
                 st.session_state["edit_ver"] += 1
                 st.rerun()
 
+        # ── Lógica de guardado ─────────────────────
         if guardar_grid:
-            orig_df = st.session_state.get(orig_key, df_editgrid)
-
-            actualizaciones = {}      # rid → {campo: valor}
-            clears          = {}      # rid → {"apto": apto, "nombre": old, "days": [...]}
-            nuevos          = {}      # (apto, day) → new_val
+            actualizaciones = {}   # rid → {campo: valor}
+            clears          = {}   # rid → {"apto": str, "days": [int]}
+            nuevos          = {}   # (apto, day) → nombre
             advertencias    = []
 
             for i, apto in enumerate(APTOS):
                 for d in dias:
-                    col     = str(d)
-                    old_val = str(orig_df.iloc[i].get(col, "") or "").strip()
-                    new_val = str(edited_grid.iloc[i].get(col, "") or "").strip()
+                    col = str(d)
+
+                    # Valor original (BD actual) y valor editado
+                    base_serie   = df_base.iloc[i]
+                    edited_serie = edited_grid.iloc[i]
+                    old_val = str(base_serie[col]   if col in base_serie.index   else "")
+                    new_val = str(edited_serie[col] if col in edited_serie.index else "")
+                    # Limpiar None / nan
+                    old_val = "" if old_val in ("None", "nan", "NaN") else old_val.strip()
+                    new_val = "" if new_val in ("None", "nan", "NaN") else new_val.strip()
 
                     if old_val == new_val:
-                        continue
+                        continue  # sin cambio
 
                     rid = reverse_map.get((apto, d))
 
                     if rid is not None and new_val:
-                        # Renombrar huésped en reserva existente
+                        # ✏️ Renombrar: celda con reserva, nombre cambiado
                         if rid not in actualizaciones:
                             actualizaciones[rid] = {}
                         actualizaciones[rid]["nombre"] = new_val
 
                     elif rid is not None and not new_val:
-                        # Celda vaciada — posible inicio de movimiento
+                        # ⬜ Vaciada: posible inicio de movimiento
                         if rid not in clears:
-                            clears[rid] = {"apto": apto, "nombre": old_val, "days": []}
+                            clears[rid] = {"apto": apto, "days": []}
                         clears[rid]["days"].append(d)
 
                     elif rid is None and new_val:
-                        # Texto nuevo en celda vacía — posible destino de movimiento o reserva nueva
+                        # 🆕 Texto nuevo en celda vacía: posible destino de movimiento o reserva nueva
                         nuevos[(apto, d)] = new_val
 
-            # ── Detectar movimientos (vaciar en A + rellenar en B mismos días) ──
+            # ── Detectar movimientos ───────────────
+            # Si una celda se vació en apto A y en el mismo día apareció texto en apto B → movimiento
             for rid, info in clears.items():
                 old_apto     = info["apto"]
                 cleared_days = info["days"]
                 matched_apto = None
 
                 for d in cleared_days:
-                    for (new_apto, new_d) in list(nuevos.keys()):
-                        if new_d == d and new_apto != old_apto:
-                            matched_apto = new_apto
+                    for (na, nd) in list(nuevos.keys()):
+                        if nd == d and na != old_apto:
+                            matched_apto = na
                             break
                     if matched_apto:
                         break
 
                 if matched_apto:
-                    # Mover: actualizar apartamento de la reserva
+                    # Mover reserva a otro apartamento
                     if rid not in actualizaciones:
                         actualizaciones[rid] = {}
                     actualizaciones[rid]["apartamento"] = matched_apto
-                    # Limpiar del dict nuevos los días correspondientes
+                    # Eliminar del dict nuevos los días del movimiento (evitar creación duplicada)
                     for d in cleared_days:
                         nuevos.pop((matched_apto, d), None)
                 else:
+                    dias_str = (f"días {min(cleared_days)}–{max(cleared_days)}"
+                                if len(cleared_days) > 1 else f"día {cleared_days[0]}")
                     advertencias.append(
-                        f"⚠️ Celda vaciada en **{old_apto}** "
-                        f"(día{'s' if len(cleared_days)>1 else ''} "
-                        f"{min(cleared_days)}{'–'+str(max(cleared_days)) if len(cleared_days)>1 else ''}). "
-                        f"Para eliminar una reserva usa '✏️ Editar reserva'."
+                        f"⚠️ Celda vaciada en **{old_apto}** ({dias_str}). "
+                        "Si quieres eliminar la reserva usa '✏️ Editar reserva'."
                     )
 
-            # ── Crear reservas de 1 día para celdas nuevas sin match ──
+            # ── Crear reservas de 1 día para entradas nuevas sin match ──
             creaciones = []
             for (apto, d), nombre in nuevos.items():
-                f_entrada = date(anio_sel, mes_n, d)
-                f_salida  = f_entrada + timedelta(days=1)
+                f_ent = date(anio_sel, mes_n, d)
+                f_sal = f_ent + timedelta(days=1)
                 creaciones.append({
                     "fuente":      "DIRECTA",
                     "nombre":      nombre,
                     "apartamento": apto,
                     "mes":         mes_sel,
                     "mes_num":     mes_n,
-                    "entrada":     f_entrada.strftime("%d/%m/%Y"),
-                    "salida":      f_salida.strftime("%d/%m/%Y"),
+                    "entrada":     f_ent.strftime("%d/%m/%Y"),
+                    "salida":      f_sal.strftime("%d/%m/%Y"),
                     "noches":      1,
                     "estado_pago": "",
                     "comentarios": "",
                 })
 
-            # ── Aplicar cambios ───────────────
+            # ── Aplicar ────────────────────────────
             total = 0
             for rid, datos in actualizaciones.items():
                 actualizar_reserva(rid, datos)
@@ -1292,8 +1293,7 @@ elif seccion == "📅 Plantilla mensual":
 
             if total:
                 st.success(f"✅ {total} cambio(s) guardados correctamente.")
-                st.session_state.pop(orig_key, None)
-                st.session_state["edit_ver"] += 1
+                st.session_state["edit_ver"] += 1   # resetea el data_editor con datos frescos
                 st.rerun()
             elif not advertencias:
                 st.info("No hay cambios que guardar.")
