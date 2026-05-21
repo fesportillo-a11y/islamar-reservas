@@ -279,17 +279,6 @@ h2, h3 { color: #2C5F8A !important; }
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# CABECERA
-# ─────────────────────────────────────────────
-st.markdown("# ESTEASUR 2015 - ISLAMAR")
-st.markdown("<span style='color:#888;font-size:0.9rem'>Gestión de Reservas · Apartamentos Islamar · 2026</span>", unsafe_allow_html=True)
-col_c1, col_c2, col_c3 = st.columns([2, 1, 2])
-with col_c2:
-    st.image("logo.png", width=120)
-
-st.divider()
-
-# ─────────────────────────────────────────────
 # SIDEBAR
 # ─────────────────────────────────────────────
 with st.sidebar:
@@ -396,7 +385,7 @@ if seccion == "📊 Reservas":
         edited = st.data_editor(
             df_show,
             use_container_width=True,
-            height=520,
+            height=700,
             column_config={
                 "fuente":       st.column_config.SelectboxColumn("Fuente", options=FUENTES, width=130),
                 "nombre":       st.column_config.TextColumn("Nombre", width=200),
