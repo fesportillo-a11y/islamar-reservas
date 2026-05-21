@@ -613,6 +613,14 @@ elif seccion == "💰 Resumen de ventas":
         except:
             return 0.0
 
+    def fmt_es(v, dec=2):
+        """Formato español: 1.234,56 €"""
+        try:
+            s = f"{float(v):,.{dec}f}"
+            return s.replace(",", "X").replace(".", ",").replace("X", ".")
+        except:
+            return "—"
+
     if df.empty:
         st.info("No hay reservas cargadas todavía.")
     else:
@@ -644,9 +652,9 @@ elif seccion == "💰 Resumen de ventas":
         n_directa      = len(df_v[df_v["fuente"] == "DIRECTA"])
 
         k1, k2, k3, k4 = st.columns(4)
-        k1.markdown(f'<div class="metric-card"><div class="metric-num">{total_bruto:,.0f} €</div><div class="metric-lab">Ingresos brutos</div></div>', unsafe_allow_html=True)
-        k2.markdown(f'<div class="metric-card"><div class="metric-num" style="color:#c0392b">{total_com:,.0f} €</div><div class="metric-lab">Comisiones Booking</div></div>', unsafe_allow_html=True)
-        k3.markdown(f'<div class="metric-card"><div class="metric-num" style="color:#27ae60">{total_neto:,.0f} €</div><div class="metric-lab">Ingreso neto</div></div>', unsafe_allow_html=True)
+        k1.markdown(f'<div class="metric-card"><div class="metric-num">{fmt_es(total_bruto, 0)} €</div><div class="metric-lab">Ingresos brutos</div></div>', unsafe_allow_html=True)
+        k2.markdown(f'<div class="metric-card"><div class="metric-num" style="color:#c0392b">{fmt_es(total_com, 0)} €</div><div class="metric-lab">Comisiones Booking.com</div></div>', unsafe_allow_html=True)
+        k3.markdown(f'<div class="metric-card"><div class="metric-num" style="color:#27ae60">{fmt_es(total_neto, 0)} €</div><div class="metric-lab">Ingreso neto</div></div>', unsafe_allow_html=True)
         k4.markdown(f'<div class="metric-card"><div class="metric-num" style="color:#8e44ad">{n_booking}</div><div class="metric-lab">Reservas Booking ({n_directa} directas)</div></div>', unsafe_allow_html=True)
 
         st.markdown("---")
@@ -686,18 +694,24 @@ elif seccion == "💰 Resumen de ventas":
         }
         df_mes_tot = pd.concat([df_mes, pd.DataFrame([totales_row])], ignore_index=True)
 
+        # Formatear columnas € en español
+        cols_eur_mes = ["Ingresos directa €", "Ingresos Booking €", "Comisión Booking €", "Total bruto €", "Total neto €"]
+        df_mes_show = df_mes_tot.copy()
+        for c in cols_eur_mes:
+            df_mes_show[c] = df_mes_show[c].apply(lambda x: fmt_es(x) if isinstance(x, (int, float)) else x)
+
         st.dataframe(
-            df_mes_tot,
+            df_mes_show,
             use_container_width=True,
             hide_index=True,
             column_config={
-                "Mes":                st.column_config.TextColumn("Mes",           width=130),
-                "Reservas":           st.column_config.NumberColumn("Reservas",    width=90,  format="%d"),
-                "Ingresos directa €": st.column_config.NumberColumn("Directa €",  width=120, format="%.2f"),
-                "Ingresos Booking €": st.column_config.NumberColumn("Booking bruto €", width=140, format="%.2f"),
-                "Comisión Booking €": st.column_config.NumberColumn("Comisión €", width=120, format="%.2f"),
-                "Total bruto €":      st.column_config.NumberColumn("Total bruto €", width=130, format="%.2f"),
-                "Total neto €":       st.column_config.NumberColumn("Total neto €",  width=130, format="%.2f"),
+                "Mes":                st.column_config.TextColumn("Mes",                width=130),
+                "Reservas":           st.column_config.NumberColumn("Reservas",         width=90, format="%d"),
+                "Ingresos directa €": st.column_config.TextColumn("Directa €",          width=130),
+                "Ingresos Booking €": st.column_config.TextColumn("Booking bruto €",    width=145),
+                "Comisión Booking €": st.column_config.TextColumn("Comisión Booking €", width=155),
+                "Total bruto €":      st.column_config.TextColumn("Total bruto €",      width=130),
+                "Total neto €":       st.column_config.TextColumn("Total neto €",       width=130),
             },
         )
 
@@ -731,15 +745,22 @@ elif seccion == "💰 Resumen de ventas":
 
             df_pivot = pd.DataFrame(filas_pivot)
 
+            # Formatear columnas € en español
+            df_pivot_show = df_pivot.copy()
+            cols_piv_eur = meses_piv + ["TOTAL €"]
+            for c in cols_piv_eur:
+                if c in df_pivot_show.columns:
+                    df_pivot_show[c] = df_pivot_show[c].apply(lambda x: fmt_es(x) if isinstance(x, (int, float)) else x)
+
             col_cfg_pivot = {
                 "Apartamento": st.column_config.TextColumn("Apartamento", width=170),
-                "TOTAL €":     st.column_config.NumberColumn("TOTAL €", width=110, format="%.2f"),
+                "TOTAL €":     st.column_config.TextColumn("TOTAL €",     width=115),
             }
             for m in meses_piv:
-                col_cfg_pivot[m] = st.column_config.NumberColumn(m[:3], width=80, format="%.2f")
+                col_cfg_pivot[m] = st.column_config.TextColumn(m[:3], width=85)
 
             st.dataframe(
-                df_pivot,
+                df_pivot_show,
                 use_container_width=True,
                 hide_index=True,
                 column_config=col_cfg_pivot,
@@ -781,16 +802,23 @@ elif seccion == "💰 Resumen de ventas":
             }
             df_com = pd.concat([df_com, pd.DataFrame([tot_com_row])], ignore_index=True)
 
+            # Formatear columnas € en español
+            cols_eur_com = ["Precio bruto €", f"Comisión ({tasa_com:.0f}%) €", "Ingreso neto €"]
+            df_com_show = df_com.copy()
+            for c in cols_eur_com:
+                if c in df_com_show.columns:
+                    df_com_show[c] = df_com_show[c].apply(lambda x: fmt_es(x) if isinstance(x, (int, float)) else x)
+
             st.dataframe(
-                df_com,
+                df_com_show,
                 use_container_width=True,
                 hide_index=True,
                 column_config={
-                    "Mes":            st.column_config.TextColumn("Mes",          width=130),
-                    "Reservas Bk.":   st.column_config.NumberColumn("Reservas",  width=90, format="%d"),
-                    "Precio bruto €": st.column_config.NumberColumn("Bruto €",   width=120, format="%.2f"),
-                    f"Comisión ({tasa_com:.0f}%) €": st.column_config.NumberColumn(f"Comisión {tasa_com:.0f}% €", width=140, format="%.2f"),
-                    "Ingreso neto €": st.column_config.NumberColumn("Neto €",    width=120, format="%.2f"),
+                    "Mes":            st.column_config.TextColumn("Mes",                        width=130),
+                    "Reservas Bk.":   st.column_config.NumberColumn("Reservas",                width=90, format="%d"),
+                    "Precio bruto €": st.column_config.TextColumn("Bruto €",                   width=130),
+                    f"Comisión ({tasa_com:.0f}%) €": st.column_config.TextColumn(f"Comisión {tasa_com:.0f}% €", width=150),
+                    "Ingreso neto €": st.column_config.TextColumn("Neto €",                    width=130),
                 },
             )
 
