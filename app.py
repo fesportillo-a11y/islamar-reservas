@@ -297,6 +297,7 @@ with st.sidebar:
     st.markdown('<span class="sb-label">Navegación</span>', unsafe_allow_html=True)
     seccion = st.radio("nav", [
         "📊 Reservas",
+        "💰 Resumen de ventas",
         "📅 Plantilla mensual",
         "📥 Importar Booking",
         "➕ Nueva reserva",
@@ -598,6 +599,284 @@ elif seccion == "✏️ Editar reserva":
             st.success("🗑️ Reserva eliminada.")
             st.cache_resource.clear()
             st.rerun()
+
+# ─────────────────────────────────────────────
+# SECCIÓN: RESUMEN DE VENTAS
+# ─────────────────────────────────────────────
+elif seccion == "💰 Resumen de ventas":
+
+    st.markdown("### 💰 Resumen de ventas")
+
+    def to_eur(v):
+        try:
+            return float(str(v).replace(",", ".").replace("€", "").replace(" ", "").strip())
+        except:
+            return 0.0
+
+    if df.empty:
+        st.info("No hay reservas cargadas todavía.")
+    else:
+        # ── Tasa de comisión configurable ─────────────────
+        col_tasa, col_void = st.columns([1, 3])
+        with col_tasa:
+            tasa_com = st.number_input(
+                "Comisión Booking.com (%)", min_value=0.0, max_value=30.0,
+                value=15.0, step=0.5, format="%.1f",
+                help="Porcentaje que cobra Booking.com sobre el precio bruto"
+            )
+        tasa = tasa_com / 100.0
+
+        # Preparar datos numéricos
+        df_v = df.copy()
+        df_v["precio_eur"] = df_v["precio"].apply(to_eur)
+        df_v["comision_eur"] = df_v.apply(
+            lambda r: r["precio_eur"] * tasa if str(r.get("fuente", "")) == "BOOKING.COM" else 0.0,
+            axis=1
+        )
+        df_v["neto_eur"] = df_v["precio_eur"] - df_v["comision_eur"]
+
+        # ── KPIs ──────────────────────────────────────────
+        st.markdown("")
+        total_bruto    = df_v["precio_eur"].sum()
+        total_com      = df_v["comision_eur"].sum()
+        total_neto     = df_v["neto_eur"].sum()
+        n_booking      = len(df_v[df_v["fuente"] == "BOOKING.COM"])
+        n_directa      = len(df_v[df_v["fuente"] == "DIRECTA"])
+
+        k1, k2, k3, k4 = st.columns(4)
+        k1.markdown(f'<div class="metric-card"><div class="metric-num">{total_bruto:,.0f} €</div><div class="metric-lab">Ingresos brutos</div></div>', unsafe_allow_html=True)
+        k2.markdown(f'<div class="metric-card"><div class="metric-num" style="color:#c0392b">{total_com:,.0f} €</div><div class="metric-lab">Comisiones Booking</div></div>', unsafe_allow_html=True)
+        k3.markdown(f'<div class="metric-card"><div class="metric-num" style="color:#27ae60">{total_neto:,.0f} €</div><div class="metric-lab">Ingreso neto</div></div>', unsafe_allow_html=True)
+        k4.markdown(f'<div class="metric-card"><div class="metric-num" style="color:#8e44ad">{n_booking}</div><div class="metric-lab">Reservas Booking ({n_directa} directas)</div></div>', unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        # ── Tabla: Ingresos por mes ────────────────────────
+        st.markdown("#### 📅 Ingresos por mes")
+
+        meses_ord = [m for m in MESES if m in df_v["mes"].values]
+        resumen_mes = []
+        for m in meses_ord:
+            sub = df_v[df_v["mes"] == m]
+            sub_d = sub[sub["fuente"] == "DIRECTA"]
+            sub_b = sub[sub["fuente"] == "BOOKING.COM"]
+            bruto_d = sub_d["precio_eur"].sum()
+            bruto_b = sub_b["precio_eur"].sum()
+            com_b   = sub_b["comision_eur"].sum()
+            resumen_mes.append({
+                "Mes":                m,
+                "Reservas":           len(sub),
+                "Ingresos directa €": round(bruto_d, 2),
+                "Ingresos Booking €": round(bruto_b, 2),
+                "Comisión Booking €": round(com_b, 2),
+                "Total bruto €":      round(bruto_d + bruto_b, 2),
+                "Total neto €":       round(bruto_d + bruto_b - com_b, 2),
+            })
+
+        df_mes = pd.DataFrame(resumen_mes)
+        # Fila de totales
+        totales_row = {
+            "Mes": "▶ TOTAL",
+            "Reservas":           df_mes["Reservas"].sum(),
+            "Ingresos directa €": round(df_mes["Ingresos directa €"].sum(), 2),
+            "Ingresos Booking €": round(df_mes["Ingresos Booking €"].sum(), 2),
+            "Comisión Booking €": round(df_mes["Comisión Booking €"].sum(), 2),
+            "Total bruto €":      round(df_mes["Total bruto €"].sum(), 2),
+            "Total neto €":       round(df_mes["Total neto €"].sum(), 2),
+        }
+        df_mes_tot = pd.concat([df_mes, pd.DataFrame([totales_row])], ignore_index=True)
+
+        st.dataframe(
+            df_mes_tot,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Mes":                st.column_config.TextColumn("Mes",           width=130),
+                "Reservas":           st.column_config.NumberColumn("Reservas",    width=90,  format="%d"),
+                "Ingresos directa €": st.column_config.NumberColumn("Directa €",  width=120, format="%.2f"),
+                "Ingresos Booking €": st.column_config.NumberColumn("Booking bruto €", width=140, format="%.2f"),
+                "Comisión Booking €": st.column_config.NumberColumn("Comisión €", width=120, format="%.2f"),
+                "Total bruto €":      st.column_config.NumberColumn("Total bruto €", width=130, format="%.2f"),
+                "Total neto €":       st.column_config.NumberColumn("Total neto €",  width=130, format="%.2f"),
+            },
+        )
+
+        st.markdown("---")
+
+        # ── Tabla pivot: Ingresos por apartamento ─────────
+        st.markdown("#### 🏠 Ingresos por apartamento y mes")
+
+        aptos_con_datos = [a for a in APTOS if a in df_v["apartamento"].values]
+        meses_piv = [m for m in MESES if m in df_v["mes"].values]
+
+        if aptos_con_datos and meses_piv:
+            filas_pivot = []
+            for apto in aptos_con_datos:
+                sub_a = df_v[df_v["apartamento"] == apto]
+                fila = {"Apartamento": apto}
+                total_apto = 0.0
+                for m in meses_piv:
+                    val = sub_a[sub_a["mes"] == m]["neto_eur"].sum()
+                    fila[m] = round(val, 2)
+                    total_apto += val
+                fila["TOTAL €"] = round(total_apto, 2)
+                filas_pivot.append(fila)
+
+            # Fila de totales por mes
+            fila_tot = {"Apartamento": "▶ TOTAL"}
+            for m in meses_piv:
+                fila_tot[m] = round(df_v[df_v["mes"] == m]["neto_eur"].sum(), 2)
+            fila_tot["TOTAL €"] = round(df_v["neto_eur"].sum(), 2)
+            filas_pivot.append(fila_tot)
+
+            df_pivot = pd.DataFrame(filas_pivot)
+
+            col_cfg_pivot = {
+                "Apartamento": st.column_config.TextColumn("Apartamento", width=170),
+                "TOTAL €":     st.column_config.NumberColumn("TOTAL €", width=110, format="%.2f"),
+            }
+            for m in meses_piv:
+                col_cfg_pivot[m] = st.column_config.NumberColumn(m[:3], width=80, format="%.2f")
+
+            st.dataframe(
+                df_pivot,
+                use_container_width=True,
+                hide_index=True,
+                column_config=col_cfg_pivot,
+            )
+        else:
+            st.info("Asigna apartamentos a las reservas para ver este desglose.")
+
+        st.markdown("---")
+
+        # ── Detalle comisiones Booking ─────────────────────
+        st.markdown("#### 🏷️ Detalle comisiones Booking.com por mes")
+
+        df_bk_v = df_v[df_v["fuente"] == "BOOKING.COM"].copy()
+        if df_bk_v.empty:
+            st.info("No hay reservas de Booking.com con precio registrado.")
+        else:
+            det_com = []
+            for m in meses_ord:
+                sub_bm = df_bk_v[df_bk_v["mes"] == m]
+                if sub_bm.empty:
+                    continue
+                bruto = sub_bm["precio_eur"].sum()
+                com   = sub_bm["comision_eur"].sum()
+                neto  = sub_bm["neto_eur"].sum()
+                det_com.append({
+                    "Mes":            m,
+                    "Reservas Bk.":   len(sub_bm),
+                    "Precio bruto €": round(bruto, 2),
+                    f"Comisión ({tasa_com:.0f}%) €": round(com, 2),
+                    "Ingreso neto €": round(neto, 2),
+                })
+            df_com = pd.DataFrame(det_com)
+            tot_com_row = {
+                "Mes": "▶ TOTAL",
+                "Reservas Bk.":   df_com["Reservas Bk."].sum(),
+                "Precio bruto €": round(df_com["Precio bruto €"].sum(), 2),
+                f"Comisión ({tasa_com:.0f}%) €": round(df_com[f"Comisión ({tasa_com:.0f}%) €"].sum(), 2),
+                "Ingreso neto €": round(df_com["Ingreso neto €"].sum(), 2),
+            }
+            df_com = pd.concat([df_com, pd.DataFrame([tot_com_row])], ignore_index=True)
+
+            st.dataframe(
+                df_com,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Mes":            st.column_config.TextColumn("Mes",          width=130),
+                    "Reservas Bk.":   st.column_config.NumberColumn("Reservas",  width=90, format="%d"),
+                    "Precio bruto €": st.column_config.NumberColumn("Bruto €",   width=120, format="%.2f"),
+                    f"Comisión ({tasa_com:.0f}%) €": st.column_config.NumberColumn(f"Comisión {tasa_com:.0f}% €", width=140, format="%.2f"),
+                    "Ingreso neto €": st.column_config.NumberColumn("Neto €",    width=120, format="%.2f"),
+                },
+            )
+
+            # Nota informativa
+            st.markdown(
+                f"<span style='font-size:0.78rem;color:#888;'>💡 La comisión aplicada es del <b>{tasa_com:.1f}%</b> sobre el precio bruto de cada reserva de Booking.com. "
+                f"Modifica el porcentaje arriba si tu contrato con Booking establece otro porcentaje.</span>",
+                unsafe_allow_html=True,
+            )
+
+        # ── Botón exportar resumen ─────────────────────────
+        st.markdown("---")
+
+        def exportar_resumen(df_mes_t, df_piv, df_com_t):
+            wb2 = openpyxl.Workbook()
+            thin2 = Side(style="thin", color="CCCCCC")
+            brd2  = Border(left=thin2, right=thin2, top=thin2, bottom=thin2)
+
+            def hdr_cell(ws, row, col, val, bg="1F4E79"):
+                c = ws.cell(row=row, column=col, value=val)
+                c.font      = Font(bold=True, color="FFFFFF", name="Calibri", size=10)
+                c.fill      = PatternFill("solid", fgColor=bg)
+                c.alignment = Alignment(horizontal="center", vertical="center")
+                c.border    = brd2
+                return c
+
+            def data_cell(ws, row, col, val, bold=False, bg=None):
+                c = ws.cell(row=row, column=col, value=val)
+                c.font   = Font(bold=bold, name="Calibri", size=10)
+                c.border = brd2
+                if bg:
+                    c.fill = PatternFill("solid", fgColor=bg)
+                return c
+
+            # Hoja 1: Por mes
+            ws1 = wb2.active
+            ws1.title = "Por Mes"
+            cols1 = list(df_mes_t.columns)
+            for ci, h in enumerate(cols1, 1):
+                hdr_cell(ws1, 1, ci, h)
+                ws1.column_dimensions[get_column_letter(ci)].width = 18
+            for ri, row in df_mes_t.iterrows():
+                is_tot = str(row.get("Mes","")).startswith("▶")
+                bg = "BDD7EE" if is_tot else None
+                for ci, col in enumerate(cols1, 1):
+                    data_cell(ws1, ri + 2, ci, row[col], bold=is_tot, bg=bg if is_tot else None)
+
+            # Hoja 2: Por apartamento
+            ws2 = wb2.create_sheet("Por Apartamento")
+            if df_piv is not None:
+                cols2 = list(df_piv.columns)
+                for ci, h in enumerate(cols2, 1):
+                    hdr_cell(ws2, 1, ci, h)
+                    ws2.column_dimensions[get_column_letter(ci)].width = 14
+                ws2.column_dimensions["A"].width = 22
+                for ri, row in df_piv.iterrows():
+                    is_tot = str(row.get("Apartamento","")).startswith("▶")
+                    for ci, col in enumerate(cols2, 1):
+                        data_cell(ws2, ri + 2, ci, row[col], bold=is_tot, bg="BDD7EE" if is_tot else None)
+
+            # Hoja 3: Comisiones
+            ws3 = wb2.create_sheet("Comisiones Booking")
+            if df_com_t is not None:
+                cols3 = list(df_com_t.columns)
+                for ci, h in enumerate(cols3, 1):
+                    hdr_cell(ws3, 1, ci, h)
+                    ws3.column_dimensions[get_column_letter(ci)].width = 18
+                for ri, row in df_com_t.iterrows():
+                    is_tot = str(row.get("Mes","")).startswith("▶")
+                    for ci, col in enumerate(cols3, 1):
+                        data_cell(ws3, ri + 2, ci, row[col], bold=is_tot, bg="BDD7EE" if is_tot else None)
+
+            buf2 = BytesIO()
+            wb2.save(buf2)
+            return buf2.getvalue()
+
+        df_piv_exp  = df_pivot if (aptos_con_datos and meses_piv) else None
+        df_com_exp  = df_com if not df_bk_v.empty else None
+        excel_res   = exportar_resumen(df_mes_tot, df_piv_exp, df_com_exp)
+        st.download_button(
+            label="⬇️ Descargar resumen en Excel",
+            data=excel_res,
+            file_name=f"Resumen_Ventas_ISLAMAR_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=False,
+        )
 
 # ─────────────────────────────────────────────
 # SECCIÓN: PLANTILLA MENSUAL
