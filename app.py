@@ -143,6 +143,10 @@ def actualizar_reserva(id_reserva: int, datos: dict):
 def eliminar_reserva(id_reserva: int):
     supabase.table("reservas").delete().eq("id", id_reserva).execute()
 
+def borrar_todas_las_reservas():
+    """Elimina TODAS las reservas de la base de datos."""
+    supabase.table("reservas").delete().gt("id", 0).execute()
+
 def mes_num(mes: str) -> int:
     try:
         return MESES.index(mes) + 1
@@ -1466,6 +1470,31 @@ elif seccion == "📥 Importar Booking":
     st.markdown("### 📥 Importar reservas desde Booking.com")
     st.markdown("Sube el Excel de **Check-in** que descarga Booking.com y se importarán automáticamente las reservas nuevas.")
 
+    # ── Zona peligrosa: borrar toda la BD ─────────────────────────────
+    with st.expander("🗑️ Borrar base de datos completa", expanded=False):
+        n_reservas = len(df) if not df.empty else 0
+        st.error(
+            f"⚠️ **Acción irreversible.** Se eliminarán las **{n_reservas} reservas** "
+            f"almacenadas actualmente. Úsalo solo para empezar desde cero antes de una importación nueva."
+        )
+        if not st.session_state.get("_confirm_borrar_bd", False):
+            if st.button("🗑️ Borrar toda la base de datos", use_container_width=True):
+                st.session_state["_confirm_borrar_bd"] = True
+                st.rerun()
+        else:
+            st.warning("¿Estás SEGURO? No hay vuelta atrás.")
+            cb1, cb2 = st.columns(2)
+            if cb1.button("✅ Sí, borrar TODO ahora", type="primary", use_container_width=True, key="btn_confirm_borrar"):
+                borrar_todas_las_reservas()
+                st.session_state["_confirm_borrar_bd"] = False
+                st.cache_data.clear()
+                st.success("✅ Base de datos vaciada correctamente. Ya puedes importar desde cero.")
+                st.rerun()
+            if cb2.button("❌ Cancelar", use_container_width=True, key="btn_cancel_borrar"):
+                st.session_state["_confirm_borrar_bd"] = False
+                st.rerun()
+
+    st.markdown("---")
     archivo = st.file_uploader("Selecciona el archivo Excel de Booking.com", type=["xls","xlsx"], key="bk_upload")
 
     if archivo:
