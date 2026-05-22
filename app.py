@@ -1098,20 +1098,20 @@ elif seccion == "📅 Plantilla mensual":
         <style>
         .cal-wrap{overflow-x:auto;border-radius:10px;box-shadow:0 3px 12px rgba(0,0,0,0.15);margin-bottom:8px;}
         .cal-tbl{border-collapse:collapse;font-family:'Segoe UI',Arial,sans-serif;width:100%;}
-        .th-apto{background:#1a3f5c;color:white;padding:6px 14px;text-align:left;font-size:0.73rem;
-                 position:sticky;left:0;z-index:3;white-space:nowrap;min-width:155px;
+        .th-apto{background:#1a3f5c;color:white;padding:6px 14px;text-align:left;font-size:0.78rem;
+                 position:sticky;left:0;z-index:3;white-space:nowrap;min-width:170px;
                  border-right:2px solid #0d2a3d;border-bottom:1px solid #0d2a3d;}
-        .th-day{background:#1F4E79;color:white;padding:3px 1px;text-align:center;
-                font-size:0.7rem;min-width:33px;border:1px solid #144070;line-height:1.2;}
+        .th-day{background:#1F4E79;color:white;padding:5px 2px;text-align:center;
+                font-size:0.75rem;min-width:55px;border:1px solid #144070;line-height:1.3;}
         .th-day.we{background:#163d5e;}
-        .dow{font-size:0.58rem;color:#90CAF9;display:block;}
+        .dow{font-size:0.62rem;color:#90CAF9;display:block;}
         .td-apto{background:#2C5F8A;color:white;font-weight:700;padding:5px 14px;white-space:nowrap;
-                 font-size:0.78rem;position:sticky;left:0;z-index:1;
+                 font-size:0.82rem;position:sticky;left:0;z-index:1;
                  border-right:2px solid #144070;border-bottom:1px solid #1a4a72;}
-        .td{padding:0;border:1px solid #dde2ea;height:30px;vertical-align:middle;overflow:hidden;}
+        .td{padding:0;border:1px solid #dde2ea;height:44px;vertical-align:middle;overflow:hidden;}
         .td.we{background:#f0f2f5;}  /* sin !important: cede ante el color de reserva */
         .td.libre{background:#fafbfd;}
-        .res{display:block;height:100%;line-height:30px;padding:0 4px;font-size:0.67rem;
+        .res{display:block;height:100%;line-height:44px;padding:0 6px;font-size:0.80rem;
              font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
         .sep td{background:#D0E8F7;color:#1F4E79;font-weight:700;padding:4px 10px;
                 font-size:0.78rem;border-top:2px solid #1F4E79;letter-spacing:.5px;}
@@ -1147,18 +1147,18 @@ elif seccion == "📅 Plantilla mensual":
                     bi  = _bg(c["fuente"])
                     tip = f"SALE: {c_out['nombre']} ({c_out['salida']}) / ENTRA: {c['nombre']} ({c['entrada']})"
                     html += (
-                        f'<td class="td{wc}" style="padding:0;height:30px;position:relative;overflow:hidden;" title="{tip}">'
+                        f'<td class="td{wc}" style="padding:0;height:44px;position:relative;overflow:hidden;" title="{tip}">'
                         # Mitad superior — cliente que sale
                         f'<div style="position:absolute;top:0;left:0;right:0;height:50%;'
                         f'background:{bo};overflow:hidden;">'
-                        f'<span style="color:#fff;font-size:0.59rem;font-weight:700;padding:0 3px;'
-                        f'line-height:15px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+                        f'<span style="color:#fff;font-size:0.74rem;font-weight:700;padding:0 6px;'
+                        f'line-height:22px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
                         f'◀ {c_out["nombre"]}</span></div>'
                         # Separador negro + mitad inferior — cliente que entra
                         f'<div style="position:absolute;top:50%;left:0;right:0;height:50%;'
                         f'background:{bi};border-top:2px solid #000;overflow:hidden;">'
-                        f'<span style="color:#fff;font-size:0.59rem;font-weight:700;padding:0 3px;'
-                        f'line-height:13px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+                        f'<span style="color:#fff;font-size:0.74rem;font-weight:700;padding:0 6px;'
+                        f'line-height:20px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
                         f'▶ {c["nombre"]}</span></div>'
                         f'</td>'
                     )
