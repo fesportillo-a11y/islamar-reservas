@@ -1104,7 +1104,7 @@ elif seccion == "📅 Plantilla mensual":
                  font-size:0.78rem;position:sticky;left:0;z-index:1;
                  border-right:2px solid #144070;border-bottom:1px solid #1a4a72;}
         .td{padding:0;border:1px solid #dde2ea;height:30px;vertical-align:middle;overflow:hidden;}
-        .td.we{background:#f0f2f5 !important;}
+        .td.we{background:#f0f2f5;}  /* sin !important: cede ante el color de reserva */
         .td.libre{background:#fafbfd;}
         .res{display:block;height:100%;line-height:30px;padding:0 4px;font-size:0.67rem;
              font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
