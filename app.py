@@ -44,33 +44,57 @@ APTOS_POR_TIPO = {
     "Estudio": [a for a in APTOS if "ESTUDIO" in a],
 }
 
-def clasificar_dormitorios(tipo_unidad_str: str, dorm_str: str) -> str:
-    """Detecta el tipo de apartamento desde tipo_unidad o dormitorios de Booking."""
-    for s in [tipo_unidad_str, dorm_str]:
-        t = str(s).lower().strip()
-        if "estudio" in t or "studio" in t:
-            return "Estudio"
-        if "2" in t:
-            return "2"
-        if "1" in t:
-            return "1"
+# ── Helpers de fecha ─────────────────────────────────────────────────
+_DATE_FMTS = ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y"]
+
+def parse_date_safe(s) -> "date | None":
+    """
+    Parsea una fecha probando múltiples formatos (dd/mm/yyyy, yyyy-mm-dd, etc.).
+    Devuelve None si no puede parsear — NUNCA lanza excepción.
+    """
+    txt = str(s).strip()
+    for t in [txt, txt[:10]]:          # intenta cadena completa y solo los 10 primeros chars
+        for fmt in _DATE_FMTS:
+            try:
+                return datetime.strptime(t, fmt).date()
+            except Exception:
+                pass
+    return None
+
+def clasificar_dormitorios(tipo_unidad_str: str) -> str:
+    """
+    Detecta el tipo de apartamento a partir del campo 'Tipo de unidad' de Booking.com.
+    Devuelve: 'Estudio', '2' o '1'.
+    NO usa el número de personas — solo el tipo de unidad.
+    """
+    t = str(tipo_unidad_str).lower().strip()
+    # Estudio / Studio / Loft
+    if any(x in t for x in ["estudio", "studio", "loft", "monoamb"]):
+        return "Estudio"
+    # Número explícito de dormitorios: "2 dormitorios", "1 bedroom", etc.
+    m = re.search(r'(\d+)\s*(?:dorm|hab|bed|bdr|room)', t)
+    if m:
+        return "2" if int(m.group(1)) >= 2 else "1"
+    # Palabras clave de 2 dormitorios sin número
+    if any(x in t for x in ["dos dorm", "two bed", "duplex", "dúplex"]):
+        return "2"
     return "1"  # defecto: 1 dormitorio
 
 def apto_libre(nombre_apto: str, f_ent: date, f_sal: date, reservas_df) -> bool:
     """
-    True si el apartamento está libre en el rango [f_ent, f_sal).
-    Mismo día entrada/salida = compatible (salida ≤12h · entrada ≥16h).
-    Conflicto real: f_ent < salida_existente AND f_sal > entrada_existente
+    True si el apartamento está libre en [f_ent, f_sal).
+    Regla mismo día: salida ≤12h · entrada ≥16h → compatible.
+    Conflicto real: f_ent < salida_existente  AND  f_sal > entrada_existente
+    Maneja cualquier formato de fecha (ISO, dd/mm/yyyy, etc.) sin errores silenciosos.
     """
     for _, r in reservas_df.iterrows():
         if str(r.get("apartamento", "")).strip() != nombre_apto:
             continue
-        try:
-            re = datetime.strptime(str(r.get("entrada", "")), "%d/%m/%Y").date()
-            rs = datetime.strptime(str(r.get("salida",  "")), "%d/%m/%Y").date()
-        except:
-            continue
-        if f_ent < rs and f_sal > re:   # solapamiento real
+        re_d = parse_date_safe(r.get("entrada", ""))
+        rs_d = parse_date_safe(r.get("salida",  ""))
+        if re_d is None or rs_d is None:
+            continue                   # fecha no parseable → ignorar fila
+        if f_ent < rs_d and f_sal > re_d:   # solapamiento real
             return False
     return True
 
@@ -1410,10 +1434,17 @@ elif seccion == "📥 Importar Booking":
 
             # ── Construir filas con auto-asignación de apartamento ──────────
             filas = []
-            # df_asignados acumula reservas ya asignadas en el batch para evitar
-            # asignar el mismo apartamento dos veces en fechas solapadas
-            df_asignados = df.copy() if not df.empty else pd.DataFrame(
-                columns=["apartamento","entrada","salida"])
+            # df_asignados: base de reservas activas para detectar conflictos.
+            # Solo incluye filas con apartamento asignado y fechas parseables.
+            # Se va ampliando con cada asignación del batch actual.
+            if not df.empty and "apartamento" in df.columns:
+                _mask_valid = (
+                    df["apartamento"].notna() &
+                    (df["apartamento"].astype(str).str.strip() != "")
+                )
+                df_asignados = df[_mask_valid][["apartamento","entrada","salida"]].copy()
+            else:
+                df_asignados = pd.DataFrame(columns=["apartamento","entrada","salida"])
 
             for _, row in bk.iterrows():
                 def g(key):
@@ -1458,8 +1489,8 @@ elif seccion == "📥 Importar Booking":
                 except:
                     n_hab = 1
 
-                # Tipo de dormitorio
-                tipo_dorm = clasificar_dormitorios(str(g("tipo_unidad")), str(g("personas")))
+                # Tipo de dormitorio — solo desde tipo_unidad (NO usar personas)
+                tipo_dorm = clasificar_dormitorios(str(g("tipo_unidad")))
                 # Precio por apartamento (dividido si son varias habitaciones)
                 try:
                     precio_unit = str(round(float(precio_raw) / n_hab, 2)) if precio_raw else ""
@@ -1521,42 +1552,98 @@ elif seccion == "📥 Importar Booking":
             col_r2.metric("✅ Nuevas a importar",   len(nuevas),   delta=f"+{len(nuevas)}")
             col_r3.metric("⚠️ Ya existentes",       len(ya_exist))
 
-            # Vista previa
+            # ── Vista previa editable ─────────────────────────────────
             if not nuevas.empty:
                 st.markdown("#### Vista previa de reservas nuevas")
-                cols_vista = ["nro_reserva","apartamento","nombre","entrada","salida","noches","personas","precio","estado_pago"]
-                st.dataframe(
-                    nuevas[[c for c in cols_vista if c in nuevas.columns]],
-                    use_container_width=True, height=300, hide_index=True,
+
+                # Aviso si alguna fila quedó sin apartamento asignado
+                sin_apto = nuevas[nuevas["apartamento"].astype(str).str.strip() == ""]
+                if not sin_apto.empty:
+                    st.warning(
+                        f"⚠️ **{len(sin_apto)} reserva(s) sin apartamento** — no había disponible del tipo "
+                        f"requerido. Selecciona uno manualmente en la columna **Apartamento ✏️** antes de importar."
+                    )
+                else:
+                    st.success("✅ Todos los apartamentos asignados correctamente. Revisa y confirma.")
+
+                cols_edit = ["apartamento","nro_reserva","nombre","entrada","salida",
+                             "noches","personas","precio","estado_pago"]
+                df_edit = nuevas[[c for c in cols_edit if c in nuevas.columns]].reset_index(drop=True)
+
+                edited_preview = st.data_editor(
+                    df_edit,
+                    use_container_width=True,
+                    height=min(60 + 35 * len(df_edit), 440),
+                    hide_index=True,
                     column_config={
-                        "nro_reserva":  st.column_config.TextColumn("Nº Reserva", width=130),
-                        "apartamento":  st.column_config.TextColumn("Apartamento", width=160),
-                        "nombre":       st.column_config.TextColumn("Nombre", width=180),
-                        "entrada":      st.column_config.TextColumn("Entrada", width=95),
-                        "salida":       st.column_config.TextColumn("Salida", width=95),
-                        "noches":       st.column_config.NumberColumn("Noches", width=65),
-                        "personas":     st.column_config.TextColumn("Pers.", width=55),
-                        "precio":       st.column_config.TextColumn("Precio €", width=90),
-                        "estado_pago":  st.column_config.TextColumn("Estado pago", width=180),
+                        "apartamento": st.column_config.SelectboxColumn(
+                            "Apartamento ✏️",
+                            options=[""] + APTOS,
+                            width=185,
+                        ),
+                        "nro_reserva": st.column_config.TextColumn("Nº Reserva",  width=130, disabled=True),
+                        "nombre":      st.column_config.TextColumn("Nombre",       width=175, disabled=True),
+                        "entrada":     st.column_config.TextColumn("Entrada",      width=90,  disabled=True),
+                        "salida":      st.column_config.TextColumn("Salida",       width=90,  disabled=True),
+                        "noches":      st.column_config.NumberColumn("Noches",     width=62,  disabled=True),
+                        "personas":    st.column_config.TextColumn("Pers.",        width=55,  disabled=True),
+                        "precio":      st.column_config.TextColumn("Precio €",     width=90,  disabled=True),
+                        "estado_pago": st.column_config.TextColumn("Estado pago",  width=175, disabled=True),
                     },
+                    num_rows="fixed",
+                    key="preview_import_editor",
                 )
+                st.caption("💡 La columna **Apartamento ✏️** es editable — puedes cambiar cualquier asignación antes de importar.")
 
                 st.markdown("")
                 if st.button(f"📥 Importar {len(nuevas)} reserva(s) nueva(s)", type="primary", use_container_width=True):
-                    importadas = 0
+                    # Aplicar cambios manuales del editor
+                    nuevas_import = nuevas.copy().reset_index(drop=True)
+                    nuevas_import["apartamento"] = edited_preview["apartamento"].values
+
+                    # Validación final: cargar BD fresca y verificar disponibilidad
+                    df_fresh    = cargar_reservas()
+                    importadas  = 0
+                    conflictos  = []
                     errores_imp = []
-                    for _, row in nuevas.iterrows():
+
+                    for _, row in nuevas_import.iterrows():
+                        apto = str(row.get("apartamento", "")).strip()
+                        f_e  = parse_date_safe(row.get("entrada", ""))
+                        f_s  = parse_date_safe(row.get("salida",  ""))
+
+                        # Verificación de conflicto antes de insertar
+                        if apto and f_e and f_s:
+                            if not apto_libre(apto, f_e, f_s, df_fresh):
+                                conflictos.append(
+                                    f"**{apto}** · {row.get('entrada','')} → {row.get('salida','')} "
+                                    f"({row.get('nombre','')})"
+                                )
+                                continue   # NO importar esta fila
+
                         try:
                             guardar_reserva(row.to_dict())
                             importadas += 1
+                            # Añadir a df_fresh para que el próximo check la tenga en cuenta
+                            if apto and f_e and f_s:
+                                df_fresh = pd.concat([df_fresh, pd.DataFrame([{
+                                    "apartamento": apto,
+                                    "entrada":     row.get("entrada",""),
+                                    "salida":      row.get("salida",""),
+                                }])], ignore_index=True)
                         except Exception as ex:
-                            errores_imp.append(str(ex))
+                            errores_imp.append(f"{row.get('nro_reserva','?')}: {ex}")
 
+                    if conflictos:
+                        st.error(
+                            f"⛔ **{len(conflictos)} reserva(s) con conflicto de disponibilidad** "
+                            f"(no se importaron):\n\n" + "\n\n".join(f"- {c}" for c in conflictos)
+                        )
                     if importadas:
                         st.success(f"✅ {importadas} reserva(s) importadas correctamente.")
                         st.rerun()
                     for err in errores_imp:
-                        st.error(f"Error: {err}")
+                        st.error(f"Error al guardar: {err}")
             else:
                 st.info("✅ Todas las reservas del archivo ya están en la base de datos. No hay nada nuevo que importar.")
 
