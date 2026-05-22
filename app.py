@@ -37,6 +37,58 @@ APTOS = [
 
 APTOS_JUANMA = {"APTO 215 - 2 DORM", "ESTUDIO 105", "ESTUDIO 216", "ESTUDIO 217"}
 
+# Apartamentos agrupados por tipo de dormitorio
+APTOS_POR_TIPO = {
+    "1":       [a for a in APTOS if "1 DORM"  in a],
+    "2":       [a for a in APTOS if "2 DORM"  in a],
+    "Estudio": [a for a in APTOS if "ESTUDIO" in a],
+}
+
+def clasificar_dormitorios(tipo_unidad_str: str, dorm_str: str) -> str:
+    """Detecta el tipo de apartamento desde tipo_unidad o dormitorios de Booking."""
+    for s in [tipo_unidad_str, dorm_str]:
+        t = str(s).lower().strip()
+        if "estudio" in t or "studio" in t:
+            return "Estudio"
+        if "2" in t:
+            return "2"
+        if "1" in t:
+            return "1"
+    return "1"  # defecto: 1 dormitorio
+
+def apto_libre(nombre_apto: str, f_ent: date, f_sal: date, reservas_df) -> bool:
+    """
+    True si el apartamento está libre en el rango [f_ent, f_sal).
+    Mismo día entrada/salida = compatible (salida ≤12h · entrada ≥16h).
+    Conflicto real: f_ent < salida_existente AND f_sal > entrada_existente
+    """
+    for _, r in reservas_df.iterrows():
+        if str(r.get("apartamento", "")).strip() != nombre_apto:
+            continue
+        try:
+            re = datetime.strptime(str(r.get("entrada", "")), "%d/%m/%Y").date()
+            rs = datetime.strptime(str(r.get("salida",  "")), "%d/%m/%Y").date()
+        except:
+            continue
+        if f_ent < rs and f_sal > re:   # solapamiento real
+            return False
+    return True
+
+def asignar_aptos_auto(tipo_dorm: str, f_ent: date, f_sal: date,
+                       n: int, reservas_df) -> list:
+    """
+    Devuelve lista de hasta n apartamentos libres del tipo solicitado.
+    Tiene en cuenta tanto la BD como las reservas ya asignadas en el batch actual.
+    """
+    candidatos = APTOS_POR_TIPO.get(tipo_dorm, APTOS_POR_TIPO["1"])
+    asignados  = []
+    for c in candidatos:
+        if len(asignados) >= n:
+            break
+        if apto_libre(c, f_ent, f_sal, reservas_df):
+            asignados.append(c)
+    return asignados
+
 # ─────────────────────────────────────────────
 # CONEXIÓN SUPABASE
 # ─────────────────────────────────────────────
@@ -1324,10 +1376,13 @@ elif seccion == "📥 Importar Booking":
                 "salida":       ["Salida"],
                 "noches":       ["Duración (noches)", "Duracion (noches)"],
                 "personas":     ["Personas", "Adultos"],
+                "habitaciones": ["Habitaciones", "Rooms", "Unidades", "Nº de habitaciones",
+                                 "Numero de habitaciones", "Número de habitaciones"],
                 "precio":       ["Precio"],
                 "estado_pago":  ["Estado del pago"],
                 "comentarios":  ["Comentarios"],
-                "tipo_unidad":  ["Tipo de unidad"],
+                "tipo_unidad":  ["Tipo de unidad", "Tipo de habitación", "Room type",
+                                 "Tipo de alojamiento"],
             }
 
             def get_col(df_bk, opciones):
@@ -1353,59 +1408,104 @@ elif seccion == "📥 Importar Booking":
                 except:
                     return str(v)
 
-            # Construir dataframe normalizado
+            # ── Construir filas con auto-asignación de apartamento ──────────
             filas = []
+            # df_asignados acumula reservas ya asignadas en el batch para evitar
+            # asignar el mismo apartamento dos veces en fechas solapadas
+            df_asignados = df.copy() if not df.empty else pd.DataFrame(
+                columns=["apartamento","entrada","salida"])
+
             for _, row in bk.iterrows():
                 def g(key):
-                    c = get_col(bk, COL_MAP.get(key,[]))
+                    c = get_col(bk, COL_MAP.get(key, []))
                     return row[c] if c and not pd.isna(row.get(c, float("nan"))) else ""
 
-                nro   = str(g("nro_reserva")).strip()
-                if not nro or nro in ("nan",""):
+                nro = str(g("nro_reserva")).strip()
+                if not nro or nro in ("nan", ""):
                     continue
 
-                entrada_raw = g("entrada")
-                salida_raw  = g("salida")
-                entrada_str = fmt_fecha(entrada_raw)
-                salida_str  = fmt_fecha(salida_raw)
+                entrada_str = fmt_fecha(g("entrada"))
+                salida_str  = fmt_fecha(g("salida"))
 
                 try:
-                    e_date = datetime.strptime(entrada_str, "%d/%m/%Y")
-                    mes_n2 = e_date.month
+                    e_date  = datetime.strptime(entrada_str, "%d/%m/%Y")
+                    mes_n2  = e_date.month
                     mes_str = MESES[mes_n2 - 1]
+                    f_ent   = e_date.date()
+                    f_sal   = datetime.strptime(salida_str, "%d/%m/%Y").date()
                 except:
-                    mes_n2, mes_str = 0, ""
+                    mes_n2, mes_str, f_ent, f_sal = 0, "", None, None
 
-                precio_raw = limpiar_precio(g("precio"))
                 noches_raw = g("noches")
                 try:
                     noches_val = int(float(str(noches_raw))) if noches_raw != "" else 0
                 except:
                     noches_val = calcular_noches(entrada_str, salida_str)
 
+                precio_raw = limpiar_precio(g("precio"))
+
                 estado_raw = str(g("estado_pago")).strip()
                 if "booking" in estado_raw.lower():
                     estado_val = "Pago mediante Booking.com"
-                elif estado_raw.lower() in ("ok","pagado"):
+                elif estado_raw.lower() in ("ok", "pagado"):
                     estado_val = "PAGADO"
                 else:
                     estado_val = estado_raw
 
-                filas.append({
-                    "nro_reserva":  nro,
-                    "fuente":       "BOOKING.COM",
-                    "nombre":       str(g("nombre")).strip().title(),
-                    "mes":          mes_str,
-                    "mes_num":      mes_n2,
-                    "entrada":      entrada_str,
-                    "salida":       salida_str,
-                    "noches":       noches_val,
-                    "personas":     str(g("personas")).replace(".0",""),
-                    "precio":       precio_raw,
-                    "estado_pago":  estado_val,
-                    "comentarios":  str(g("comentarios")) if g("comentarios") else "",
-                    "apartamento":  "",
-                })
+                # Número de habitaciones reservadas
+                try:
+                    n_hab = max(1, int(float(str(g("habitaciones")))))
+                except:
+                    n_hab = 1
+
+                # Tipo de dormitorio
+                tipo_dorm = clasificar_dormitorios(str(g("tipo_unidad")), str(g("personas")))
+                # Precio por apartamento (dividido si son varias habitaciones)
+                try:
+                    precio_unit = str(round(float(precio_raw) / n_hab, 2)) if precio_raw else ""
+                except:
+                    precio_unit = precio_raw
+
+                base = {
+                    "nro_reserva": nro,
+                    "fuente":      "BOOKING.COM",
+                    "nombre":      str(g("nombre")).strip().title(),
+                    "mes":         mes_str,
+                    "mes_num":     mes_n2,
+                    "entrada":     entrada_str,
+                    "salida":      salida_str,
+                    "noches":      noches_val,
+                    "personas":    str(g("personas")).replace(".0", ""),
+                    "dormitorios": tipo_dorm,
+                    "estado_pago": estado_val,
+                    "comentarios": str(g("comentarios")) if g("comentarios") else "",
+                }
+
+                # Auto-asignar apartamentos disponibles
+                if f_ent and f_sal:
+                    aptos_ok = asignar_aptos_auto(tipo_dorm, f_ent, f_sal,
+                                                  n_hab, df_asignados)
+                else:
+                    aptos_ok = []
+
+                # Crear una fila por apartamento asignado; si faltan, fila sin asignar
+                aptos_para_crear = aptos_ok if aptos_ok else [""] * n_hab
+                for idx_hab, apto in enumerate(aptos_para_crear):
+                    nro_ext = f"{nro}-{idx_hab+1}" if n_hab > 1 else nro
+                    fila = {**base,
+                            "nro_reserva": nro_ext,
+                            "precio":      precio_unit,
+                            "apartamento": apto}
+                    filas.append(fila)
+                    # Registrar en df_asignados para el siguiente apartamento del batch
+                    if apto:
+                        nuevo_reg = pd.DataFrame([{
+                            "apartamento": apto,
+                            "entrada":     entrada_str,
+                            "salida":      salida_str,
+                        }])
+                        df_asignados = pd.concat([df_asignados, nuevo_reg],
+                                                 ignore_index=True)
 
             df_bk = pd.DataFrame(filas)
 
