@@ -737,6 +737,23 @@ elif seccion == "💰 Resumen de ventas":
         k3.markdown(f'<div class="metric-card"><div class="metric-num" style="color:#27ae60">{fmt_es(total_neto, 0)} €</div><div class="metric-lab">Ingreso neto</div></div>', unsafe_allow_html=True)
         k4.markdown(f'<div class="metric-card"><div class="metric-num" style="color:#8e44ad">{n_booking}</div><div class="metric-lab">Reservas Booking ({n_directa} directas)</div></div>', unsafe_allow_html=True)
 
+        # ── KPI split: Propios vs JUANMA ──────────────────
+        df_v_propios = df_v[~df_v["apartamento"].isin(APTOS_JUANMA)]
+        df_v_juanma  = df_v[ df_v["apartamento"].isin(APTOS_JUANMA)]
+        kp1, kp2 = st.columns(2)
+        kp1.markdown(
+            f'<div class="metric-card">'
+            f'<div class="metric-num" style="color:#1a5276">{fmt_es(df_v_propios["neto_eur"].sum(), 0)} €</div>'
+            f'<div class="metric-lab">🏠 Apartamentos propios — ingreso neto</div></div>',
+            unsafe_allow_html=True,
+        )
+        kp2.markdown(
+            f'<div class="metric-card">'
+            f'<div class="metric-num" style="color:#1a5276">{fmt_es(df_v_juanma["neto_eur"].sum(), 0)} €</div>'
+            f'<div class="metric-lab">👤 JUANMA — ingreso neto</div></div>',
+            unsafe_allow_html=True,
+        )
+
         st.markdown("---")
 
         # ── Tabla: Ingresos por mes ────────────────────────
@@ -801,11 +818,14 @@ elif seccion == "💰 Resumen de ventas":
         st.markdown("#### 🏠 Ingresos por apartamento y mes")
 
         aptos_con_datos = [a for a in APTOS if a in df_v["apartamento"].values]
+        aptos_propios_d = [a for a in aptos_con_datos if a not in APTOS_JUANMA]
+        aptos_juanma_d  = [a for a in aptos_con_datos if a in APTOS_JUANMA]
         meses_piv = [m for m in MESES if m in df_v["mes"].values]
+        df_pivot  = pd.DataFrame()   # para el export aunque no haya datos
 
-        if aptos_con_datos and meses_piv:
-            filas_pivot = []
-            for apto in aptos_con_datos:
+        def _piv_filas(aptos_list):
+            filas = []
+            for apto in aptos_list:
                 sub_a = df_v[df_v["apartamento"] == apto]
                 fila = {"Apartamento": apto}
                 total_apto = 0.0
@@ -814,37 +834,63 @@ elif seccion == "💰 Resumen de ventas":
                     fila[m] = round(val, 2)
                     total_apto += val
                 fila["TOTAL €"] = round(total_apto, 2)
-                filas_pivot.append(fila)
+                filas.append(fila)
+            return filas
 
-            # Fila de totales por mes
-            fila_tot = {"Apartamento": "▶ TOTAL"}
+        def _subtotal_fila(label, aptos_list):
+            sub_df = df_v[df_v["apartamento"].isin(aptos_list)]
+            fila = {"Apartamento": label}
             for m in meses_piv:
-                fila_tot[m] = round(df_v[df_v["mes"] == m]["neto_eur"].sum(), 2)
-            fila_tot["TOTAL €"] = round(df_v["neto_eur"].sum(), 2)
-            filas_pivot.append(fila_tot)
+                fila[m] = round(sub_df[sub_df["mes"] == m]["neto_eur"].sum(), 2)
+            fila["TOTAL €"] = round(sub_df["neto_eur"].sum(), 2)
+            return fila
 
-            df_pivot = pd.DataFrame(filas_pivot)
+        def _fmt_piv(df_in):
+            df_out = df_in.copy()
+            for c in meses_piv + ["TOTAL €"]:
+                if c in df_out.columns:
+                    df_out[c] = df_out[c].apply(lambda x: fmt_es(x) if isinstance(x, (int, float)) else x)
+            return df_out
 
-            # Formatear columnas € en español
-            df_pivot_show = df_pivot.copy()
-            cols_piv_eur = meses_piv + ["TOTAL €"]
-            for c in cols_piv_eur:
-                if c in df_pivot_show.columns:
-                    df_pivot_show[c] = df_pivot_show[c].apply(lambda x: fmt_es(x) if isinstance(x, (int, float)) else x)
+        col_cfg_pivot = {
+            "Apartamento": st.column_config.TextColumn("Apartamento", width=200),
+            "TOTAL €":     st.column_config.TextColumn("TOTAL €",     width=115),
+        }
+        for m in meses_piv:
+            col_cfg_pivot[m] = st.column_config.TextColumn(m[:3], width=85)
 
-            col_cfg_pivot = {
-                "Apartamento": st.column_config.TextColumn("Apartamento", width=170),
-                "TOTAL €":     st.column_config.TextColumn("TOTAL €",     width=115),
-            }
-            for m in meses_piv:
-                col_cfg_pivot[m] = st.column_config.TextColumn(m[:3], width=85)
+        if aptos_con_datos and meses_piv:
+            all_filas_export = []
 
-            st.dataframe(
-                df_pivot_show,
-                use_container_width=True,
-                hide_index=True,
-                column_config=col_cfg_pivot,
-            )
+            # ── Apartamentos propios ──
+            if aptos_propios_d:
+                st.markdown("**🏠 Apartamentos propios**")
+                fp = _piv_filas(aptos_propios_d)
+                sub_p = _subtotal_fila("▶ SUBTOTAL PROPIOS", aptos_propios_d)
+                fp.append(sub_p)
+                df_pp = pd.DataFrame(fp)
+                st.dataframe(_fmt_piv(df_pp), use_container_width=True,
+                             hide_index=True, column_config=col_cfg_pivot)
+                all_filas_export += fp
+
+            # ── Apartamentos JUANMA ──
+            if aptos_juanma_d:
+                st.markdown("**👤 Apartamentos JUANMA**")
+                fj = _piv_filas(aptos_juanma_d)
+                sub_j = _subtotal_fila("▶ SUBTOTAL JUANMA", aptos_juanma_d)
+                fj.append(sub_j)
+                df_jj = pd.DataFrame(fj)
+                st.dataframe(_fmt_piv(df_jj), use_container_width=True,
+                             hide_index=True, column_config=col_cfg_pivot)
+                all_filas_export += fj
+
+            # ── Total general ──
+            fila_gen = _subtotal_fila("▶ TOTAL GENERAL", aptos_con_datos)
+            all_filas_export.append(fila_gen)
+            st.dataframe(_fmt_piv(pd.DataFrame([fila_gen])), use_container_width=True,
+                         hide_index=True, column_config=col_cfg_pivot)
+
+            df_pivot = pd.DataFrame(all_filas_export)
         else:
             st.info("Asigna apartamentos a las reservas para ver este desglose.")
 
@@ -975,7 +1021,7 @@ elif seccion == "💰 Resumen de ventas":
             wb2.save(buf2)
             return buf2.getvalue()
 
-        df_piv_exp  = df_pivot if (aptos_con_datos and meses_piv) else None
+        df_piv_exp  = df_pivot if not df_pivot.empty else None
         df_com_exp  = df_com if not df_bk_v.empty else None
         excel_res   = exportar_resumen(df_mes_tot, df_piv_exp, df_com_exp)
         st.download_button(
