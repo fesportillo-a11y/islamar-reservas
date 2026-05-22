@@ -27,11 +27,15 @@ ESTADOS  = ["", "PAGADO", "PENDIENTE", "SEÑAL PAGADA", "Pago mediante Booking.c
 DORMS    = ["1", "2", "3", "Estudio"]
 
 APTOS = [
+    # ── Apartamentos propios ──────────────────
     "APTO 2 - 1 DORM", "APTO 9 - 1 DORM", "APTO 10 - 1 DORM", "APTO 109 - 1 DORM",
     "APTO 201 - 1 DORM", "APTO 208 - 1 DORM", "APTO 209 - 1 DORM",
-    "APTO 7 - 2 DORM", "APTO 14 - 2 DORM", "APTO 15 - 2 DORM", "APTO 215 - 2 DORM",
-    "ESTUDIO 105", "ESTUDIO 216", "ESTUDIO 217",
+    "APTO 7 - 2 DORM", "APTO 14 - 2 DORM", "APTO 15 - 2 DORM",
+    # ── Apartamentos JUANMA ───────────────────
+    "APTO 215 - 2 DORM", "ESTUDIO 105", "ESTUDIO 216", "ESTUDIO 217",
 ]
+
+APTOS_JUANMA = {"APTO 215 - 2 DORM", "ESTUDIO 105", "ESTUDIO 216", "ESTUDIO 217"}
 
 # ─────────────────────────────────────────────
 # CONEXIÓN SUPABASE
@@ -996,7 +1000,7 @@ elif seccion == "📅 Plantilla mensual":
         html += '</tr>'
 
         for i, apto in enumerate(APTOS):
-            if apto == "ESTUDIO 105":
+            if apto == "APTO 215 - 2 DORM":
                 html += f'<tr class="sep"><td colspan="{n_dias+1}">▸ JUANMA</td></tr>'
             rbg = "#f5f8fc" if i % 2 == 0 else "#ffffff"
             html += f'<tr><td class="td-apto">{apto}</td>'
