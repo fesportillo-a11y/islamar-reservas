@@ -1104,6 +1104,8 @@ elif seccion == "📅 Plantilla mensual":
         .th-day{background:#1F4E79;color:white;padding:5px 2px;text-align:center;
                 font-size:0.75rem;min-width:55px;border:1px solid #144070;line-height:1.3;}
         .th-day.we{background:#163d5e;}
+        .th-day.sun{background:#163d5e;min-width:85px;}
+        .td.sun{background:#f0f2f5;}
         .dow{font-size:0.62rem;color:#90CAF9;display:block;}
         .td-apto{background:#2C5F8A;color:white;font-weight:700;padding:5px 14px;white-space:nowrap;
                  font-size:0.82rem;position:sticky;left:0;z-index:1;
@@ -1122,7 +1124,7 @@ elif seccion == "📅 Plantilla mensual":
         html += f'<tr><th class="th-apto" style="font-size:0.88rem;font-weight:700;">{mes_sel} {anio_sel}</th>'
         for d in dias:
             wd = (primer_dia + d - 1) % 7
-            we = " we" if wd >= 5 else ""
+            we = " sun" if wd == 6 else (" we" if wd == 5 else "")
             html += f'<th class="th-day{we}">{d}<span class="dow">{DIAS_SEM[wd]}</span></th>'
         html += '</tr>'
 
@@ -1139,7 +1141,7 @@ elif seccion == "📅 Plantilla mensual":
                 c_out = salida_map.get((apto, d))  # cliente que SALE ese día
                 split = c and c_out and c.get("id") != c_out.get("id")
                 wd    = (primer_dia + d - 1) % 7
-                wc    = " we" if wd >= 5 else ""
+                wc    = " sun" if wd == 6 else (" we" if wd == 5 else "")
 
                 if split:
                     # ── Casilla dividida: mitad superior = salida · mitad inferior = entrada ──
