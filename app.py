@@ -1524,19 +1524,20 @@ elif seccion == "📥 Importar Booking":
             # Vista previa
             if not nuevas.empty:
                 st.markdown("#### Vista previa de reservas nuevas")
-                cols_vista = ["nro_reserva","nombre","entrada","salida","noches","personas","precio","estado_pago"]
+                cols_vista = ["nro_reserva","apartamento","nombre","entrada","salida","noches","personas","precio","estado_pago"]
                 st.dataframe(
                     nuevas[[c for c in cols_vista if c in nuevas.columns]],
                     use_container_width=True, height=300, hide_index=True,
                     column_config={
                         "nro_reserva":  st.column_config.TextColumn("Nº Reserva", width=130),
-                        "nombre":       st.column_config.TextColumn("Nombre", width=200),
-                        "entrada":      st.column_config.TextColumn("Entrada", width=100),
-                        "salida":       st.column_config.TextColumn("Salida", width=100),
-                        "noches":       st.column_config.NumberColumn("Noches", width=70),
-                        "personas":     st.column_config.TextColumn("Pers.", width=60),
+                        "apartamento":  st.column_config.TextColumn("Apartamento", width=160),
+                        "nombre":       st.column_config.TextColumn("Nombre", width=180),
+                        "entrada":      st.column_config.TextColumn("Entrada", width=95),
+                        "salida":       st.column_config.TextColumn("Salida", width=95),
+                        "noches":       st.column_config.NumberColumn("Noches", width=65),
+                        "personas":     st.column_config.TextColumn("Pers.", width=55),
                         "precio":       st.column_config.TextColumn("Precio €", width=90),
-                        "estado_pago":  st.column_config.TextColumn("Estado pago", width=200),
+                        "estado_pago":  st.column_config.TextColumn("Estado pago", width=180),
                     },
                 )
 
