@@ -27,11 +27,10 @@ ESTADOS  = ["", "PAGADO", "PENDIENTE", "SEÑAL PAGADA", "Pago mediante Booking.c
 DORMS    = ["1", "2", "3", "Estudio"]
 
 APTOS = [
-    "APTO 1 - 1 DORM", "APTO 2 - 1 DORM", "APTO 9 - 1 DORM", "APTO 10 - 1 DORM",
-    "APTO 109 - 1 DORM", "APTO 201 - 1 DORM", "APTO 208 - 1 DORM",
-    "APTO 209 - 1 DORM", "APTO 210 - 1 DORM",
-    "APTO 7 - 2 DORM", "APTO 14 - 2 DORM", "APTO 15 - 2 DORM", "APTO 204 - 2 DORM",
-    "ESTUDIO 105", "ESTUDIO 106",
+    "APTO 2 - 1 DORM", "APTO 9 - 1 DORM", "APTO 10 - 1 DORM", "APTO 109 - 1 DORM",
+    "APTO 201 - 1 DORM", "APTO 208 - 1 DORM", "APTO 209 - 1 DORM",
+    "APTO 7 - 2 DORM", "APTO 14 - 2 DORM", "APTO 15 - 2 DORM", "APTO 215 - 2 DORM",
+    "ESTUDIO 105", "ESTUDIO 216", "ESTUDIO 217",
 ]
 
 # ─────────────────────────────────────────────
