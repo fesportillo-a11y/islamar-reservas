@@ -1513,6 +1513,17 @@ elif seccion == "📥 Importar Booking":
                 except:
                     return str(v)
 
+            # ── Detectar cancelaciones ──────────────────────────────────────
+            def es_cancelada(estado_str: str) -> bool:
+                """True si Booking.com marca la reserva como cancelada o no-show."""
+                t = str(estado_str).lower().strip()
+                return any(x in t for x in [
+                    "cancel", "anula", "no show", "no-show", "noshow",
+                    "cancelled", "canceled", "annulled",
+                ])
+
+            canceladas_excel = []   # filas del Excel marcadas como canceladas
+
             # ── Construir filas con auto-asignación de apartamento ──────────
             filas = []
             # df_asignados: base de reservas activas para detectar conflictos.
@@ -1536,6 +1547,18 @@ elif seccion == "📥 Importar Booking":
                 if not nro or nro in ("nan", ""):
                     continue
 
+                # ── Filtrar canceladas ANTES de procesar ─────────────────
+                estado_raw = str(g("estado_pago")).strip()
+                if es_cancelada(estado_raw):
+                    canceladas_excel.append({
+                        "nro_reserva": nro,
+                        "nombre":      str(g("nombre")).strip().title(),
+                        "entrada":     fmt_fecha(g("entrada")),
+                        "salida":      fmt_fecha(g("salida")),
+                        "estado":      estado_raw,
+                    })
+                    continue   # ← no importar reservas canceladas
+
                 entrada_str = fmt_fecha(g("entrada"))
                 salida_str  = fmt_fecha(g("salida"))
 
@@ -1556,7 +1579,7 @@ elif seccion == "📥 Importar Booking":
 
                 precio_raw = limpiar_precio(g("precio"))
 
-                estado_raw = str(g("estado_pago")).strip()
+                # estado_raw ya leído arriba; traducir al valor interno
                 if "booking" in estado_raw.lower():
                     estado_val = "Pago mediante Booking.com"
                 elif estado_raw.lower() in ("ok", "pagado"):
@@ -1619,19 +1642,70 @@ elif seccion == "📥 Importar Booking":
                         df_asignados = pd.concat([df_asignados, nuevo_reg],
                                                  ignore_index=True)
 
-            df_bk = pd.DataFrame(filas)
+            df_bk = pd.DataFrame(filas) if filas else pd.DataFrame()
 
             # Detectar duplicados (nro_reserva ya en BD)
             nros_bd = set(str(r) for r in df["nro_reserva"].tolist()) if not df.empty else set()
-            df_bk["_nuevo"] = ~df_bk["nro_reserva"].astype(str).isin(nros_bd)
-            nuevas   = df_bk[df_bk["_nuevo"]].drop(columns=["_nuevo"])
-            ya_exist = df_bk[~df_bk["_nuevo"]].drop(columns=["_nuevo"])
+            if not df_bk.empty:
+                df_bk["_nuevo"] = ~df_bk["nro_reserva"].astype(str).isin(nros_bd)
+                nuevas   = df_bk[df_bk["_nuevo"]].drop(columns=["_nuevo"])
+                ya_exist = df_bk[~df_bk["_nuevo"]].drop(columns=["_nuevo"])
+            else:
+                nuevas   = pd.DataFrame()
+                ya_exist = pd.DataFrame()
 
-            # Resumen
-            col_r1, col_r2, col_r3 = st.columns(3)
-            col_r1.metric("Reservas en el archivo", len(df_bk))
-            col_r2.metric("✅ Nuevas a importar",   len(nuevas),   delta=f"+{len(nuevas)}")
-            col_r3.metric("⚠️ Ya existentes",       len(ya_exist))
+            # ── Canceladas del Excel que ya están guardadas en la BD ───────
+            canceladas_en_bd = []
+            if canceladas_excel and not df.empty:
+                nros_cancel = {c["nro_reserva"] for c in canceladas_excel}
+                for _, r in df.iterrows():
+                    stored = str(r.get("nro_reserva", ""))
+                    # match exacto O sufijo -1/-2 (reservas multi-habitación)
+                    base   = re.sub(r'-\d+$', '', stored)
+                    if stored in nros_cancel or base in nros_cancel:
+                        canceladas_en_bd.append(r)
+
+            # ── Resumen métricas ────────────────────────────────────────────
+            col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+            col_r1.metric("Válidas en el archivo",     len(df_bk))
+            col_r2.metric("✅ Nuevas a importar",       len(nuevas),  delta=f"+{len(nuevas)}")
+            col_r3.metric("⚠️ Ya existentes",           len(ya_exist))
+            col_r4.metric("🚫 Canceladas (excluidas)",  len(canceladas_excel))
+
+            # ── Panel de canceladas que están en la BD ──────────────────────
+            if canceladas_en_bd:
+                df_cancel_bd = pd.DataFrame(canceladas_en_bd)
+                st.markdown("---")
+                st.error(
+                    f"🚨 **{len(df_cancel_bd)} reserva(s)** ya guardadas en la aplicación "
+                    f"aparecen ahora como **CANCELADAS** en Booking.com. ¿Deseas eliminarlas?"
+                )
+                cols_c = [c for c in ["nro_reserva","nombre","apartamento","entrada","salida"]
+                          if c in df_cancel_bd.columns]
+                st.dataframe(df_cancel_bd[cols_c], use_container_width=True, hide_index=True,
+                             column_config={
+                                 "nro_reserva": st.column_config.TextColumn("Nº Reserva",  width=130),
+                                 "nombre":       st.column_config.TextColumn("Nombre",       width=190),
+                                 "apartamento":  st.column_config.TextColumn("Apartamento",  width=175),
+                                 "entrada":      st.column_config.TextColumn("Entrada",       width=90),
+                                 "salida":       st.column_config.TextColumn("Salida",        width=90),
+                             })
+                c_si, c_no = st.columns(2)
+                ids_eliminar = [int(r["id"]) for _, r in df_cancel_bd.iterrows()]
+                if c_si.button("🗑️ Sí, eliminar reservas canceladas",
+                               type="primary", use_container_width=True, key="btn_del_cancel"):
+                    for rid in ids_eliminar:
+                        eliminar_reserva(rid)
+                    st.success(f"✅ {len(ids_eliminar)} reserva(s) cancelada(s) eliminadas.")
+                    st.rerun()
+                if c_no.button("Mantener en la aplicación",
+                               use_container_width=True, key="btn_keep_cancel"):
+                    st.info("Las reservas canceladas se han mantenido en la aplicación.")
+            elif canceladas_excel:
+                st.info(
+                    f"ℹ️ {len(canceladas_excel)} reserva(s) cancelada(s) en el archivo "
+                    f"— ninguna estaba guardada en la aplicación."
+                )
 
             # ── Vista previa editable ─────────────────────────────────
             if not nuevas.empty:
