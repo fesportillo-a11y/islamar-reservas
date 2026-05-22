@@ -1050,9 +1050,10 @@ elif seccion == "📅 Plantilla mensual":
     primer_dia = date(anio_sel, mes_n, 1).weekday()   # 0=Lunes
     DIAS_SEM   = ["L","M","X","J","V","S","D"]
 
-    # ── Construir grid y reverse_map ──────────
-    grid = {apto: {d: None for d in dias} for apto in APTOS}
-    reverse_map = {}  # (apto, day) → reservation_id
+    # ── Construir grid, salida_map y reverse_map ──────────
+    grid       = {apto: {d: None for d in dias} for apto in APTOS}
+    salida_map = {}   # (apto, día) → datos del cliente que SALE ese día
+    reverse_map = {}  # (apto, día) → reservation_id
 
     for _, r in df.iterrows():
         try:
@@ -1061,20 +1062,24 @@ elif seccion == "📅 Plantilla mensual":
             apto    = str(r.get("apartamento","")).strip()
             if apto not in APTOS:
                 continue
+            rid  = int(r.get("id"))
             edia = entrada.day if entrada.month == mes_n and entrada.year == anio_sel else 0
             sdia = salida.day  if salida.month  == mes_n and salida.year  == anio_sel else n_dias + 1
+            data = {
+                "id": rid, "nombre": str(r.get("nombre","")),
+                "fuente": str(r.get("fuente","")),
+                "entrada": str(r.get("entrada","")), "salida": str(r.get("salida","")),
+                "precio": str(r.get("precio","")), "estado_pago": str(r.get("estado_pago","")),
+                "edia": edia, "sdia": sdia,
+            }
             for d in dias:
                 curr = date(anio_sel, mes_n, d)
                 if entrada <= curr < salida:
-                    rid = int(r.get("id"))
-                    grid[apto][d] = {
-                        "id": rid, "nombre": str(r.get("nombre","")),
-                        "fuente": str(r.get("fuente","")),
-                        "entrada": str(r.get("entrada","")), "salida": str(r.get("salida","")),
-                        "precio": str(r.get("precio","")), "estado_pago": str(r.get("estado_pago","")),
-                        "edia": edia, "sdia": sdia,
-                    }
+                    grid[apto][d] = data
                     reverse_map[(apto, d)] = rid
+            # Registrar el día de salida para detectar casilla compartida
+            if salida.month == mes_n and salida.year == anio_sel and salida.day in set(dias):
+                salida_map[(apto, salida.day)] = data
         except:
             pass
 
@@ -1121,18 +1126,45 @@ elif seccion == "📅 Plantilla mensual":
             html += f'<th class="th-day{we}">{d}<span class="dow">{DIAS_SEM[wd]}</span></th>'
         html += '</tr>'
 
+        def _bg(fuente):
+            return "#1565C0" if fuente == "DIRECTA" else ("#2E7D32" if fuente == "BOOKING.COM" else "#6A1B9A")
+
         for i, apto in enumerate(APTOS):
             if apto == "APTO 215 - 2 DORM":
                 html += f'<tr class="sep"><td colspan="{n_dias+1}">▸ JUANMA</td></tr>'
             rbg = "#f5f8fc" if i % 2 == 0 else "#ffffff"
             html += f'<tr><td class="td-apto">{apto}</td>'
             for d in dias:
-                c  = grid[apto][d]
-                wd = (primer_dia + d - 1) % 7
-                wc = " we" if wd >= 5 else ""
-                if c:
-                    f   = c["fuente"]
-                    bg  = "#1565C0" if f == "DIRECTA" else ("#2E7D32" if f == "BOOKING.COM" else "#6A1B9A")
+                c     = grid[apto][d]          # cliente que ENTRA o está
+                c_out = salida_map.get((apto, d))  # cliente que SALE ese día
+                split = c and c_out and c.get("id") != c_out.get("id")
+                wd    = (primer_dia + d - 1) % 7
+                wc    = " we" if wd >= 5 else ""
+
+                if split:
+                    # ── Casilla dividida: mitad superior = salida · mitad inferior = entrada ──
+                    bo  = _bg(c_out["fuente"])
+                    bi  = _bg(c["fuente"])
+                    tip = f"SALE: {c_out['nombre']} ({c_out['salida']}) / ENTRA: {c['nombre']} ({c['entrada']})"
+                    html += (
+                        f'<td class="td{wc}" style="padding:0;height:30px;position:relative;overflow:hidden;" title="{tip}">'
+                        # Mitad superior — cliente que sale
+                        f'<div style="position:absolute;top:0;left:0;right:0;height:50%;'
+                        f'background:{bo};overflow:hidden;">'
+                        f'<span style="color:#fff;font-size:0.59rem;font-weight:700;padding:0 3px;'
+                        f'line-height:15px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+                        f'◀ {c_out["nombre"]}</span></div>'
+                        # Separador negro + mitad inferior — cliente que entra
+                        f'<div style="position:absolute;top:50%;left:0;right:0;height:50%;'
+                        f'background:{bi};border-top:2px solid #000;overflow:hidden;">'
+                        f'<span style="color:#fff;font-size:0.59rem;font-weight:700;padding:0 3px;'
+                        f'line-height:13px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+                        f'▶ {c["nombre"]}</span></div>'
+                        f'</td>'
+                    )
+                elif c:
+                    # ── Casilla normal (un solo cliente) ──
+                    bg  = _bg(c["fuente"])
                     nom = c["nombre"]
                     tip = f"{nom} | {c['entrada']} → {c['salida']}"
                     pre = "▶ " if d == c["edia"] else ""
@@ -1140,6 +1172,7 @@ elif seccion == "📅 Plantilla mensual":
                     html += (f'<td class="td{wc}" style="background:{bg};" title="{tip}">'
                              f'<span class="res" style="color:white;">{pre}{nom}{suf}</span></td>')
                 else:
+                    # ── Casilla libre ──
                     fbg = "#eaecef" if wd >= 5 else rbg
                     html += f'<td class="td libre{wc}" style="background:{fbg};"></td>'
             html += '</tr>'
