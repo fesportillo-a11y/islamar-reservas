@@ -44,7 +44,7 @@ APTOS_POR_TIPO = {
     "Estudio": [a for a in APTOS if "ESTUDIO" in a],
 }
 
-# ── Helpers de fecha ─────────────────────────────────────────────────
+# ── Helpers de fecha y estado ─────────────────────────────────────────
 _DATE_FMTS = ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y"]
 
 def parse_date_safe(s) -> "date | None":
@@ -60,6 +60,13 @@ def parse_date_safe(s) -> "date | None":
             except Exception:
                 pass
     return None
+
+_ESTADOS_CANCELADOS = {"cancel", "anula", "no show", "no-show", "noshow", "cancelled", "canceled"}
+
+def es_cancelada(estado_str: str) -> bool:
+    """True si el estado indica que la reserva está cancelada o es un no-show."""
+    t = str(estado_str).lower().strip()
+    return any(x in t for x in _ESTADOS_CANCELADOS)
 
 def clasificar_dormitorios(tipo_unidad_str: str) -> str:
     """
@@ -390,10 +397,11 @@ with st.sidebar:
 
     # Filtros
     st.markdown('<span class="sb-label">Filtros</span>', unsafe_allow_html=True)
-    filtro_mes    = st.multiselect("Mes", MESES, placeholder="Todos los meses")
-    filtro_fuente = st.multiselect("Fuente", FUENTES, placeholder="Todas las fuentes")
-    filtro_nombre = st.text_input("Buscar nombre", placeholder="Nombre del cliente...")
-    filtro_dorm   = st.multiselect("Dormitorios", DORMS, placeholder="Todos")
+    filtro_mes        = st.multiselect("Mes", MESES, placeholder="Todos los meses")
+    filtro_fuente     = st.multiselect("Fuente", FUENTES, placeholder="Todas las fuentes")
+    filtro_nombre     = st.text_input("Buscar nombre", placeholder="Nombre del cliente...")
+    filtro_dorm       = st.multiselect("Dormitorios", DORMS, placeholder="Todos")
+    mostrar_canceladas = st.checkbox("Mostrar canceladas / anuladas", value=False)
 
 # ─────────────────────────────────────────────
 # CARGAR DATOS
@@ -422,6 +430,8 @@ if df.empty:
 
 # Aplicar filtros
 df_filtrado = df.copy()
+if not mostrar_canceladas and not df_filtrado.empty:
+    df_filtrado = df_filtrado[~df_filtrado["estado_pago"].apply(es_cancelada)]
 if filtro_mes:
     df_filtrado = df_filtrado[df_filtrado["mes"].isin(filtro_mes)]
 if filtro_fuente:
@@ -1059,33 +1069,46 @@ elif seccion == "📅 Plantilla mensual":
     salida_map = {}   # (apto, día) → datos del cliente que SALE ese día
     reverse_map = {}  # (apto, día) → reservation_id
 
+    dias_set = set(dias)
     for _, r in df.iterrows():
+        # ── Ignorar reservas canceladas / anuladas ──────────────────────
+        if es_cancelada(r.get("estado_pago", "")):
+            continue
+
+        # ── Parsear fechas con soporte multi-formato ────────────────────
+        entrada = parse_date_safe(r.get("entrada", ""))
+        salida  = parse_date_safe(r.get("salida",  ""))
+        apto    = str(r.get("apartamento", "")).strip()
+
+        if not entrada or not salida or apto not in APTOS:
+            continue
         try:
-            entrada = datetime.strptime(str(r.get("entrada","")), "%d/%m/%Y").date()
-            salida  = datetime.strptime(str(r.get("salida", "")), "%d/%m/%Y").date()
-            apto    = str(r.get("apartamento","")).strip()
-            if apto not in APTOS:
-                continue
-            rid  = int(r.get("id"))
-            edia = entrada.day if entrada.month == mes_n and entrada.year == anio_sel else 0
-            sdia = salida.day  if salida.month  == mes_n and salida.year  == anio_sel else n_dias + 1
-            data = {
-                "id": rid, "nombre": str(r.get("nombre","")),
-                "fuente": str(r.get("fuente","")),
-                "entrada": str(r.get("entrada","")), "salida": str(r.get("salida","")),
-                "precio": str(r.get("precio","")), "estado_pago": str(r.get("estado_pago","")),
-                "edia": edia, "sdia": sdia,
-            }
-            for d in dias:
-                curr = date(anio_sel, mes_n, d)
-                if entrada <= curr < salida:
-                    grid[apto][d] = data
-                    reverse_map[(apto, d)] = rid
-            # Registrar el día de salida para detectar casilla compartida
-            if salida.month == mes_n and salida.year == anio_sel and salida.day in set(dias):
-                salida_map[(apto, salida.day)] = data
-        except:
-            pass
+            rid = int(r.get("id"))
+        except Exception:
+            continue
+
+        edia = entrada.day if entrada.month == mes_n and entrada.year == anio_sel else 0
+        sdia = salida.day  if salida.month  == mes_n and salida.year  == anio_sel else n_dias + 1
+
+        # Fechas siempre en dd/mm/yyyy para el display (independiente de cómo estén en BD)
+        ent_str = entrada.strftime("%d/%m/%Y")
+        sal_str = salida.strftime("%d/%m/%Y")
+
+        data = {
+            "id": rid, "nombre": str(r.get("nombre", "")),
+            "fuente": str(r.get("fuente", "")),
+            "entrada": ent_str, "salida": sal_str,
+            "precio": str(r.get("precio", "")), "estado_pago": str(r.get("estado_pago", "")),
+            "edia": edia, "sdia": sdia,
+        }
+        for d in dias:
+            curr = date(anio_sel, mes_n, d)
+            if entrada <= curr < salida:
+                grid[apto][d] = data
+                reverse_map[(apto, d)] = rid
+        # Registrar día de salida para casilla compartida / media casilla checkout
+        if salida.month == mes_n and salida.year == anio_sel and salida.day in dias_set:
+            salida_map[(apto, salida.day)] = data
 
     # ── Versión de edición (para refrescar data_editor tras guardar) ──
     if "edit_ver" not in st.session_state:
@@ -1177,6 +1200,21 @@ elif seccion == "📅 Plantilla mensual":
                     suf = " ◀" if d == c["sdia"] - 1 and 0 < c["sdia"] <= n_dias + 1 else ""
                     html += (f'<td class="td{wc}" style="background:{bg};" title="{tip}">'
                              f'<span class="res" style="color:white;">{pre}{nom}{suf}</span></td>')
+                elif c_out:
+                    # ── Solo checkout ese día (sin nueva entrada) — media casilla superior ──
+                    bo  = _bg(c_out["fuente"])
+                    fbg = "#eaecef" if wd >= 5 else rbg
+                    tip = f"SALE: {c_out['nombre']} ({c_out['salida']})"
+                    html += (
+                        f'<td class="td{wc}" style="padding:0;height:44px;position:relative;overflow:hidden;" title="{tip}">'
+                        f'<div style="position:absolute;top:0;left:0;right:0;height:50%;background:{bo};overflow:hidden;">'
+                        f'<span style="color:#fff;font-size:0.74rem;font-weight:700;padding:0 6px;'
+                        f'line-height:22px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+                        f'◀ {c_out["nombre"]}</span></div>'
+                        f'<div style="position:absolute;top:50%;left:0;right:0;height:50%;background:{fbg};'
+                        f'border-top:1px solid #bbb;overflow:hidden;"></div>'
+                        f'</td>'
+                    )
                 else:
                     # ── Casilla libre ──
                     fbg = "#eaecef" if wd >= 5 else rbg
@@ -1541,15 +1579,6 @@ elif seccion == "📥 Importar Booking":
                     return d.strftime("%d/%m/%Y")
                 except:
                     return str(v)
-
-            # ── Detectar cancelaciones ──────────────────────────────────────
-            def es_cancelada(estado_str: str) -> bool:
-                """True si Booking.com marca la reserva como cancelada o no-show."""
-                t = str(estado_str).lower().strip()
-                return any(x in t for x in [
-                    "cancel", "anula", "no show", "no-show", "noshow",
-                    "cancelled", "canceled", "annulled",
-                ])
 
             canceladas_excel = []   # filas del Excel marcadas como canceladas
 
