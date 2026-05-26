@@ -362,34 +362,35 @@ st.markdown("""
     color: #ffffff !important;
     font-size: 1rem !important;
 }
-/* ── Buscar nombre: texto visible en Chrome/Edge/Safari ── */
-[data-testid="stSidebar"] .stTextInput input,
-[data-testid="stSidebar"] .stTextInput input:focus,
-[data-testid="stSidebar"] .stTextInput input:active,
-[data-testid="stSidebar"] .stTextInput input:not(:placeholder-shown) {
-    background: rgba(255,255,255,0.12) !important;
-    background-color: rgba(255,255,255,0.12) !important;
+/* ── Buscar nombre: cubrir TODOS los niveles del DOM del input ── */
+/* Contenedor baseweb (el que tiene el fondo blanco de Streamlit) */
+[data-testid="stSidebar"] [data-testid="stTextInput"] [data-baseweb="input"],
+[data-testid="stSidebar"] [data-testid="stTextInput"] [data-baseweb="input"] > div,
+[data-testid="stSidebar"] [data-testid="stTextInput"] [data-baseweb="base-input"] {
+    background-color: #12325a !important;
     border: 1px solid rgba(255,255,255,0.30) !important;
     border-radius: 7px !important;
+    box-shadow: none !important;
+}
+/* El <input> propiamente dicho */
+[data-testid="stSidebar"] [data-testid="stTextInput"] input {
+    background-color: #12325a !important;
     color: #ffffff !important;
     -webkit-text-fill-color: #ffffff !important;
+    caret-color: #ffffff !important;
     font-size: 1rem !important;
     font-weight: 500 !important;
-    caret-color: #ffffff !important;
+    border: none !important;
     box-shadow: none !important;
 }
-[data-testid="stSidebar"] .stTextInput input::placeholder {
-    color: rgba(255,255,255,0.40) !important;
-    -webkit-text-fill-color: rgba(255,255,255,0.40) !important;
+[data-testid="stSidebar"] [data-testid="stTextInput"] input::placeholder {
+    color: rgba(255,255,255,0.45) !important;
+    -webkit-text-fill-color: rgba(255,255,255,0.45) !important;
 }
-/* Eliminar borde rojo de error de Streamlit en el sidebar */
-[data-testid="stSidebar"] .stTextInput [data-baseweb="input"] {
-    border-color: rgba(255,255,255,0.30) !important;
-    box-shadow: none !important;
-}
-[data-testid="stSidebar"] .stTextInput [data-baseweb="input"]:focus-within {
+/* Foco: borde azul */
+[data-testid="stSidebar"] [data-testid="stTextInput"] [data-baseweb="input"]:focus-within {
     border-color: rgba(100,181,246,0.70) !important;
-    box-shadow: 0 0 0 2px rgba(100,181,246,0.22) !important;
+    box-shadow: 0 0 0 2px rgba(100,181,246,0.20) !important;
 }
 [data-testid="stSidebar"] .stMultiSelect [data-baseweb="tag"] {
     background: rgba(100,181,246,0.25) !important;
