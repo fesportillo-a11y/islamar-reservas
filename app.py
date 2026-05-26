@@ -61,7 +61,11 @@ def parse_date_safe(s) -> "date | None":
                 pass
     return None
 
-_ESTADOS_CANCELADOS = {"cancel", "anula", "no show", "no-show", "noshow", "cancelled", "canceled"}
+_ESTADOS_CANCELADOS = {
+    "cancel", "anula", "no show", "no-show", "noshow",
+    "cancelled", "canceled", "cancelled_by_guest", "cancelled_by_hotel",
+    "guest_cancelled", "annul",
+}
 
 def es_cancelada(estado_str: str) -> bool:
     """True si el estado indica que la reserva está cancelada o es un no-show."""
@@ -90,6 +94,9 @@ def clasificar_dormitorios(tipo_unidad_str: str) -> str:
         "dos dorm", "duplex", "dúplex", "2 dorm",
     ]):
         return "2"
+    # Explícito 1 dormitorio en inglés (one-bedroom → "1")
+    if any(x in t_nor for x in ["one bed", "one room", "one dorm", "1 dorm"]):
+        return "1"
     return "1"  # defecto: 1 dormitorio
 
 def dorm_desde_nombre_apto(nombre_apto: str) -> str:
@@ -1221,10 +1228,26 @@ elif seccion == "📅 Plantilla mensual":
             html += f'<th class="th-day{we}">{d}<span class="dow">{DIAS_SEM[wd]}</span></th>'
         html += '</tr>'
 
-        def _bg(fuente):
-            if fuente == "DIRECTA":     return "#D9763A"   # naranja cálido
-            if fuente == "BOOKING.COM": return "#2E8B6E"   # verde azulado
-            return "#7B5EA7"                               # violeta (otras)
+        # Paleta de 14 colores distintos y legibles — se asignan por ID de reserva
+        _PALETA = [
+            "#2E6FA3",  # azul medio
+            "#C0622A",  # naranja tostado
+            "#2E8B6E",  # verde esmeralda
+            "#7B3FA0",  # violeta
+            "#B5452A",  # rojo ladrillo
+            "#1A7A6E",  # verde azulado oscuro
+            "#A0522D",  # sienna
+            "#3A6B9E",  # azul acero
+            "#7A5C00",  # ocre dorado
+            "#5B3A8A",  # índigo
+            "#2B7A4B",  # verde bosque
+            "#8B3A62",  # frambuesa
+            "#3D6B8A",  # azul pizarra
+            "#6B5C2E",  # marrón kaki
+        ]
+
+        def _bg(fuente, rid=0):
+            return _PALETA[int(rid) % len(_PALETA)]
 
         for i, apto in enumerate(APTOS):
             if apto == "APTO 215 - 2 DORM":
@@ -1241,8 +1264,8 @@ elif seccion == "📅 Plantilla mensual":
 
                 if split:
                     # ── Casilla dividida: checkout arriba / checkin abajo ──
-                    bo  = _bg(c_out["fuente"])
-                    bi  = _bg(c["fuente"])
+                    bo  = _bg(c_out["fuente"], c_out["id"])
+                    bi  = _bg(c["fuente"], c["id"])
                     tip = f"SALE: {c_out['nombre']} ({c_out['salida']}) / ENTRA: {c['nombre']} ({c['entrada']})"
                     html += (
                         f'<td class="td{wc}" style="padding:0;position:relative;overflow:hidden;" title="{tip}">'
@@ -1270,7 +1293,7 @@ elif seccion == "📅 Plantilla mensual":
                         span_end += 1
                     colspan = span_end - d + 1
 
-                    bg             = _bg(c["fuente"])
+                    bg             = _bg(c["fuente"], curr_rid)
                     started_before = (c["edia"] == 0)       # empezó antes del mes
                     ends_after     = (c["sdia"] > n_dias)   # termina después del mes
 
@@ -1301,7 +1324,7 @@ elif seccion == "📅 Plantilla mensual":
 
                 elif c_out:
                     # ── Solo checkout ese día (sin nueva entrada) ──
-                    bo  = _bg(c_out["fuente"])
+                    bo  = _bg(c_out["fuente"], c_out["id"])
                     fbg = "#eaecef" if wd >= 5 else "#fafbfd"
                     tip = f"SALE: {c_out['nombre']} ({c_out['salida']})"
                     html += (
@@ -1327,9 +1350,8 @@ elif seccion == "📅 Plantilla mensual":
 
         st.markdown("""
         <div style="display:flex;gap:14px;align-items:center;font-size:0.78rem;margin-bottom:6px;flex-wrap:wrap;">
-          <span style="color:#888;">↩ Entró mes anterior &nbsp;|&nbsp; ◀ Salida / ▶ Entrada en casilla dividida &nbsp;|&nbsp; Gris = fin de semana</span>
-          <span style="background:#D9763A;color:white;padding:2px 14px;border-radius:10px;font-weight:600;">■ Directa</span>
-          <span style="background:#2E8B6E;color:white;padding:2px 14px;border-radius:10px;font-weight:600;">■ Booking.com</span>
+          <span style="color:#888;">Cada color identifica una reserva diferente &nbsp;|&nbsp;
+          ↩ Entró mes anterior &nbsp;|&nbsp; ◀/▶ Casilla dividida (salida/entrada mismo día) &nbsp;|&nbsp; Gris = fin de semana</span>
         </div>
         """, unsafe_allow_html=True)
         st.markdown(html, unsafe_allow_html=True)
@@ -1654,7 +1676,9 @@ elif seccion == "📥 Importar Booking":
                 "habitaciones": ["Habitaciones", "Rooms", "Unidades", "Nº de habitaciones",
                                  "Numero de habitaciones", "Número de habitaciones"],
                 "precio":       ["Precio"],
-                "estado_pago":  ["Estado del pago"],
+                "estado_pago":  ["Estado del pago", "Estado de pago", "Estado",
+                                 "Status", "Payment status", "Booking status",
+                                 "Reservation status", "Estado reserva"],
                 "comentarios":  ["Comentarios"],
                 "tipo_unidad":  ["Tipo de unidad", "Tipo de habitación", "Room type",
                                  "Tipo de alojamiento"],
