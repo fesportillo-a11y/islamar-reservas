@@ -87,6 +87,38 @@ def clasificar_dormitorios(tipo_unidad_str: str) -> str:
         return "2"
     return "1"  # defecto: 1 dormitorio
 
+def dorm_desde_nombre_apto(nombre_apto: str) -> str:
+    """Extrae el tipo de dormitorios directamente del nombre del apartamento."""
+    n = nombre_apto.upper()
+    if "ESTUDIO" in n: return "Estudio"
+    if "2 DORM"  in n: return "2"
+    if "1 DORM"  in n: return "1"
+    return clasificar_dormitorios(nombre_apto)   # fallback genérico
+
+def match_apto_directo(tipo_unidad_str: str) -> "str | None":
+    """
+    Intenta hacer match del valor 'Tipo de unidad' del Excel con un apartamento de APTOS.
+    Estrategia (en orden de prioridad):
+      1. Igualdad exacta (case-insensitive y sin espacios extra)
+      2. El valor está contenido en el nombre del apartamento
+      3. El nombre del apartamento está contenido en el valor
+    Devuelve el nombre del apartamento si hay match, None si no.
+    """
+    t = str(tipo_unidad_str).strip()
+    if not t or t.lower() in ("nan", "none", ""):
+        return None
+    tu = t.upper()
+    # 1. Igualdad exacta
+    for apto in APTOS:
+        if tu == apto.upper():
+            return apto
+    # 2/3. Contención parcial (en ambas direcciones)
+    for apto in APTOS:
+        au = apto.upper()
+        if tu in au or au in tu:
+            return apto
+    return None
+
 def apto_libre(nombre_apto: str, f_ent: date, f_sal: date, reservas_df) -> bool:
     """
     True si el apartamento está libre en [f_ent, f_sal).
@@ -1688,8 +1720,17 @@ elif seccion == "📥 Importar Booking":
                 except:
                     n_hab = 1
 
-                # Tipo de dormitorio — solo desde tipo_unidad (NO usar personas)
-                tipo_dorm = clasificar_dormitorios(str(g("tipo_unidad")))
+                # ── Tipo de unidad → match directo con apartamento ──────────
+                tipo_unidad_raw = str(g("tipo_unidad")).strip()
+                apto_directo    = match_apto_directo(tipo_unidad_raw)
+
+                if apto_directo:
+                    # "Tipo de unidad" es el nombre exacto del apartamento
+                    tipo_dorm = dorm_desde_nombre_apto(apto_directo)
+                else:
+                    # Fallback: clasificación genérica por descripción
+                    tipo_dorm = clasificar_dormitorios(tipo_unidad_raw)
+
                 # Precio por apartamento (dividido si son varias habitaciones)
                 try:
                     precio_unit = str(round(float(precio_raw) / n_hab, 2)) if precio_raw else ""
@@ -1711,12 +1752,20 @@ elif seccion == "📥 Importar Booking":
                     "comentarios": str(g("comentarios")) if g("comentarios") else "",
                 }
 
-                # Auto-asignar apartamentos disponibles
-                if f_ent and f_sal:
+                # ── Asignación de apartamentos ───────────────────────────────
+                if apto_directo and f_ent and f_sal:
+                    # Match directo: intentar asignar el apartamento conocido
+                    # Si está libre → usarlo; si ocupado → buscar mismo tipo
+                    if apto_libre(apto_directo, f_ent, f_sal, df_asignados):
+                        aptos_ok = [apto_directo] * n_hab
+                    else:
+                        aptos_ok = asignar_aptos_auto(tipo_dorm, f_ent, f_sal,
+                                                      n_hab, df_asignados)
+                elif f_ent and f_sal:
                     aptos_ok = asignar_aptos_auto(tipo_dorm, f_ent, f_sal,
                                                   n_hab, df_asignados)
                 else:
-                    aptos_ok = []
+                    aptos_ok = [apto_directo] if apto_directo else []
 
                 # Crear una fila por apartamento asignado; si faltan, fila sin asignar
                 aptos_para_crear = aptos_ok if aptos_ok else [""] * n_hab
