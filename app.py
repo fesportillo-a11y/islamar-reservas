@@ -73,17 +73,22 @@ def clasificar_dormitorios(tipo_unidad_str: str) -> str:
     Detecta el tipo de apartamento a partir del campo 'Tipo de unidad' de Booking.com.
     Devuelve: 'Estudio', '2' o '1'.
     NO usa el número de personas — solo el tipo de unidad.
+    Maneja tanto valores en español como en inglés (Two-Bedroom Apartment, etc.).
     """
-    t = str(tipo_unidad_str).lower().strip()
+    t     = str(tipo_unidad_str).lower().strip()
+    t_nor = t.replace("-", " ").replace("_", " ")   # normaliza guiones → espacios
     # Estudio / Studio / Loft
-    if any(x in t for x in ["estudio", "studio", "loft", "monoamb"]):
+    if any(x in t_nor for x in ["estudio", "studio", "loft", "monoamb"]):
         return "Estudio"
-    # Número explícito de dormitorios: "2 dormitorios", "1 bedroom", etc.
-    m = re.search(r'(\d+)\s*(?:dorm|hab|bed|bdr|room)', t)
+    # Número explícito de dormitorios: "2 dormitorios", "2 bedroom", etc.
+    m = re.search(r'(\d+)\s*(?:dorm|hab|bed|bdr|room)', t_nor)
     if m:
         return "2" if int(m.group(1)) >= 2 else "1"
-    # Palabras clave de 2 dormitorios sin número
-    if any(x in t for x in ["dos dorm", "two bed", "duplex", "dúplex"]):
+    # Palabras escritas (inglés/español): "two-bedroom", "two bedroom", "dos dorm"…
+    if any(x in t_nor for x in [
+        "two bed", "two room", "two dorm",
+        "dos dorm", "duplex", "dúplex", "2 dorm",
+    ]):
         return "2"
     return "1"  # defecto: 1 dormitorio
 
