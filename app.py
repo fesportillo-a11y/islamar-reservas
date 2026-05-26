@@ -355,24 +355,41 @@ st.markdown("""
     text-transform: uppercase !important;
     margin-bottom: 2px !important;
 }
-[data-testid="stSidebar"] .stMultiSelect [data-baseweb="select"] > div,
-[data-testid="stSidebar"] .stTextInput input {
-    background: rgba(255,255,255,0.10) !important;
+[data-testid="stSidebar"] .stMultiSelect [data-baseweb="select"] > div {
+    background: rgba(255,255,255,0.08) !important;
     border: 1px solid rgba(255,255,255,0.18) !important;
     border-radius: 7px !important;
     color: #ffffff !important;
     font-size: 1rem !important;
+}
+/* ── Buscar nombre: texto visible en Chrome/Edge/Safari ── */
+[data-testid="stSidebar"] .stTextInput input,
+[data-testid="stSidebar"] .stTextInput input:focus,
+[data-testid="stSidebar"] .stTextInput input:active,
+[data-testid="stSidebar"] .stTextInput input:not(:placeholder-shown) {
+    background: rgba(255,255,255,0.12) !important;
+    background-color: rgba(255,255,255,0.12) !important;
+    border: 1px solid rgba(255,255,255,0.30) !important;
+    border-radius: 7px !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    font-size: 1rem !important;
+    font-weight: 500 !important;
     caret-color: #ffffff !important;
+    box-shadow: none !important;
 }
 [data-testid="stSidebar"] .stTextInput input::placeholder {
-    color: rgba(255,255,255,0.45) !important;
-    font-size: 0.92rem !important;
+    color: rgba(255,255,255,0.40) !important;
+    -webkit-text-fill-color: rgba(255,255,255,0.40) !important;
 }
-[data-testid="stSidebar"] .stTextInput input:focus {
-    background: rgba(255,255,255,0.15) !important;
-    border-color: rgba(100,181,246,0.55) !important;
-    outline: none !important;
-    box-shadow: 0 0 0 2px rgba(100,181,246,0.20) !important;
+/* Eliminar borde rojo de error de Streamlit en el sidebar */
+[data-testid="stSidebar"] .stTextInput [data-baseweb="input"] {
+    border-color: rgba(255,255,255,0.30) !important;
+    box-shadow: none !important;
+}
+[data-testid="stSidebar"] .stTextInput [data-baseweb="input"]:focus-within {
+    border-color: rgba(100,181,246,0.70) !important;
+    box-shadow: 0 0 0 2px rgba(100,181,246,0.22) !important;
 }
 [data-testid="stSidebar"] .stMultiSelect [data-baseweb="tag"] {
     background: rgba(100,181,246,0.25) !important;
