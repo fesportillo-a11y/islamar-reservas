@@ -1137,11 +1137,11 @@ elif seccion == "📅 Plantilla mensual":
         .td-apto{background:#2C5F8A;color:white;font-weight:700;padding:5px 14px;white-space:nowrap;
                  font-size:0.82rem;position:sticky;left:0;z-index:1;
                  border-right:2px solid #144070;border-bottom:1px solid #1a4a72;}
-        .td{padding:0;border:1px solid #dde2ea;height:44px;vertical-align:middle;overflow:hidden;}
-        .td.we{background:#f0f2f5;}  /* sin !important: cede ante el color de reserva */
+        .td{padding:8px 0;border:1px solid #dde2ea;height:52px;vertical-align:middle;
+            overflow:visible;position:relative;box-sizing:border-box;}
+        .td.we{background:#eceff1;}
+        .td.sun{background:#eceff1;}
         .td.libre{background:#fafbfd;}
-        .res{display:block;height:100%;line-height:44px;padding:0 6px;font-size:0.80rem;
-             font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
         .sep td{background:#D0E8F7;color:#1F4E79;font-weight:700;padding:4px 10px;
                 font-size:0.78rem;border-top:2px solid #1F4E79;letter-spacing:.5px;}
         </style>
@@ -1156,77 +1156,108 @@ elif seccion == "📅 Plantilla mensual":
         html += '</tr>'
 
         def _bg(fuente):
-            return "#1565C0" if fuente == "DIRECTA" else ("#2E7D32" if fuente == "BOOKING.COM" else "#6A1B9A")
+            if fuente == "DIRECTA":     return "#D9763A"   # naranja cálido
+            if fuente == "BOOKING.COM": return "#2E8B6E"   # verde azulado
+            return "#7B5EA7"                               # violeta (otras)
 
         for i, apto in enumerate(APTOS):
             if apto == "APTO 215 - 2 DORM":
                 html += f'<tr class="sep"><td colspan="{n_dias+1}">▸ JUANMA</td></tr>'
-            rbg = "#f5f8fc" if i % 2 == 0 else "#ffffff"
             html += f'<tr><td class="td-apto">{apto}</td>'
             for d in dias:
-                c     = grid[apto][d]          # cliente que ENTRA o está
-                c_out = salida_map.get((apto, d))  # cliente que SALE ese día
+                c     = grid[apto][d]
+                c_out = salida_map.get((apto, d))
                 split = c and c_out and c.get("id") != c_out.get("id")
                 wd    = (primer_dia + d - 1) % 7
                 wc    = " sun" if wd == 6 else (" we" if wd == 5 else "")
 
                 if split:
-                    # ── Casilla dividida: mitad superior = salida · mitad inferior = entrada ──
+                    # ── Casilla dividida: mitad superior = salida / mitad inferior = entrada ──
                     bo  = _bg(c_out["fuente"])
                     bi  = _bg(c["fuente"])
                     tip = f"SALE: {c_out['nombre']} ({c_out['salida']}) / ENTRA: {c['nombre']} ({c['entrada']})"
                     html += (
-                        f'<td class="td{wc}" style="padding:0;height:44px;position:relative;overflow:hidden;" title="{tip}">'
-                        # Mitad superior — cliente que sale
-                        f'<div style="position:absolute;top:0;left:0;right:0;height:50%;'
-                        f'background:{bo};overflow:hidden;">'
-                        f'<span style="color:#fff;font-size:0.74rem;font-weight:700;padding:0 6px;'
-                        f'line-height:22px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
-                        f'◀ {c_out["nombre"]}</span></div>'
-                        # Separador negro + mitad inferior — cliente que entra
-                        f'<div style="position:absolute;top:50%;left:0;right:0;height:50%;'
-                        f'background:{bi};border-top:2px solid #000;overflow:hidden;">'
-                        f'<span style="color:#fff;font-size:0.74rem;font-weight:700;padding:0 6px;'
-                        f'line-height:20px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
-                        f'▶ {c["nombre"]}</span></div>'
+                        f'<td class="td{wc}" style="padding:0;position:relative;overflow:hidden;" title="{tip}">'
+                        f'<div style="position:absolute;top:0;left:0;right:0;height:50%;background:{bo};'
+                        f'display:flex;align-items:center;overflow:hidden;">'
+                        f'<span style="color:#fff;font-size:0.72rem;font-weight:700;padding:0 5px;'
+                        f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">◀ {c_out["nombre"]}</span></div>'
+                        f'<div style="position:absolute;top:50%;left:0;right:0;height:50%;background:{bi};'
+                        f'border-top:2px solid #000;display:flex;align-items:center;overflow:hidden;">'
+                        f'<span style="color:#fff;font-size:0.72rem;font-weight:700;padding:0 5px;'
+                        f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">▶ {c["nombre"]}</span></div>'
                         f'</td>'
                     )
                 elif c:
-                    # ── Casilla normal (un solo cliente) ──
-                    bg  = _bg(c["fuente"])
-                    nom = c["nombre"]
-                    tip = f"{nom} | {c['entrada']} → {c['salida']}"
-                    pre = "▶ " if d == c["edia"] else ""
-                    suf = " ◀" if d == c["sdia"] - 1 and 0 < c["sdia"] <= n_dias + 1 else ""
-                    html += (f'<td class="td{wc}" style="background:{bg};" title="{tip}">'
-                             f'<span class="res" style="color:white;">{pre}{nom}{suf}</span></td>')
+                    # ── Barra continua profesional ──
+                    curr_rid  = c["id"]
+                    bg        = _bg(c["fuente"])
+                    # ¿El día anterior tiene la misma reserva?
+                    prev_c    = grid[apto].get(d - 1) if d > 1 else None
+                    prev_same = prev_c is not None and prev_c.get("id") == curr_rid
+                    # ¿El día siguiente tiene la misma reserva?
+                    next_c    = grid[apto].get(d + 1) if d < n_dias else None
+                    next_same = next_c is not None and next_c.get("id") == curr_rid
+                    # Bordes del TD: mismo color que la barra en las juntas → junta invisible
+                    bl_td = f"1px solid {bg}" if prev_same else "1px solid #dde2ea"
+                    br_td = f"1px solid {bg}" if next_same else "1px solid #dde2ea"
+                    # Posición absoluta de la barra: pega al borde en continuaciones
+                    left_px  = "0"   if prev_same else "4px"
+                    right_px = "0"   if next_same else "4px"
+                    # Radio: redondeado solo en los extremos reales de la barra
+                    if   not prev_same and not next_same: brad = "6px"
+                    elif not prev_same:                   brad = "6px 0 0 6px"
+                    elif not next_same:                   brad = "0 6px 6px 0"
+                    else:                                 brad = "0"
+                    # Contenido: nombre solo en la primera celda visible
+                    if not prev_same:
+                        prefix  = "↩ " if c["edia"] == 0 else ""
+                        content = (
+                            f'<span style="font-size:0.76rem;font-weight:700;color:#fff;'
+                            f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+                            f'{prefix}{c["nombre"]}</span>'
+                        )
+                        pad = "0 7px"
+                    else:
+                        content = ""
+                        pad     = "0"
+                    tip = f"{c['nombre']} | {c['entrada']} → {c['salida']}"
+                    html += (
+                        f'<td class="td{wc}" style="padding:0;position:relative;'
+                        f'border-top:1px solid #dde2ea;border-bottom:1px solid #dde2ea;'
+                        f'border-left:{bl_td};border-right:{br_td};" title="{tip}">'
+                        f'<div style="position:absolute;top:5px;bottom:5px;left:{left_px};right:{right_px};'
+                        f'background:{bg};border-radius:{brad};overflow:hidden;'
+                        f'display:flex;align-items:center;padding:{pad};">'
+                        f'{content}</div></td>'
+                    )
                 elif c_out:
                     # ── Solo checkout ese día (sin nueva entrada) — media casilla superior ──
                     bo  = _bg(c_out["fuente"])
-                    fbg = "#eaecef" if wd >= 5 else rbg
+                    fbg = "#eaecef" if wd >= 5 else "#fafbfd"
                     tip = f"SALE: {c_out['nombre']} ({c_out['salida']})"
                     html += (
-                        f'<td class="td{wc}" style="padding:0;height:44px;position:relative;overflow:hidden;" title="{tip}">'
-                        f'<div style="position:absolute;top:0;left:0;right:0;height:50%;background:{bo};overflow:hidden;">'
-                        f'<span style="color:#fff;font-size:0.74rem;font-weight:700;padding:0 6px;'
-                        f'line-height:22px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
-                        f'◀ {c_out["nombre"]}</span></div>'
-                        f'<div style="position:absolute;top:50%;left:0;right:0;height:50%;background:{fbg};'
-                        f'border-top:1px solid #bbb;overflow:hidden;"></div>'
+                        f'<td class="td{wc}" style="padding:0;position:relative;overflow:hidden;" title="{tip}">'
+                        f'<div style="position:absolute;top:0;left:0;right:0;height:50%;background:{bo};'
+                        f'display:flex;align-items:center;overflow:hidden;">'
+                        f'<span style="color:#fff;font-size:0.72rem;font-weight:700;padding:0 5px;'
+                        f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">◀ {c_out["nombre"]}</span></div>'
+                        f'<div style="position:absolute;top:50%;left:0;right:0;height:50%;'
+                        f'background:{fbg};border-top:1px solid #bbb;overflow:hidden;"></div>'
                         f'</td>'
                     )
                 else:
                     # ── Casilla libre ──
-                    fbg = "#eaecef" if wd >= 5 else rbg
+                    fbg = "#eaecef" if wd >= 5 else "#fafbfd"
                     html += f'<td class="td libre{wc}" style="background:{fbg};"></td>'
             html += '</tr>'
         html += '</table></div>'
 
         st.markdown("""
         <div style="display:flex;gap:14px;align-items:center;font-size:0.78rem;margin-bottom:6px;flex-wrap:wrap;">
-          <span style="color:#888;">▶ Entrada &nbsp;|&nbsp; ◀ Salida &nbsp;|&nbsp; Gris = fin de semana</span>
-          <span style="background:#1565C0;color:white;padding:2px 12px;border-radius:12px;">■ Directa</span>
-          <span style="background:#2E7D32;color:white;padding:2px 12px;border-radius:12px;">■ Booking.com</span>
+          <span style="color:#888;">↩ Entró mes anterior &nbsp;|&nbsp; ◀ Salida / ▶ Entrada en casilla dividida &nbsp;|&nbsp; Gris = fin de semana</span>
+          <span style="background:#D9763A;color:white;padding:2px 14px;border-radius:10px;font-weight:600;">■ Directa</span>
+          <span style="background:#2E8B6E;color:white;padding:2px 14px;border-radius:10px;font-weight:600;">■ Booking.com</span>
         </div>
         """, unsafe_allow_html=True)
         st.markdown(html, unsafe_allow_html=True)
