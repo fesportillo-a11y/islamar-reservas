@@ -1129,7 +1129,7 @@ elif seccion == "📅 Plantilla mensual":
                  position:sticky;left:0;z-index:3;white-space:nowrap;min-width:170px;
                  border-right:2px solid #0d2a3d;border-bottom:1px solid #0d2a3d;}
         .th-day{background:#1F4E79;color:white;padding:5px 2px;text-align:center;
-                font-size:0.75rem;min-width:55px;border:1px solid #144070;line-height:1.3;}
+                font-size:0.75rem;min-width:85px;border:1px solid #144070;line-height:1.3;}
         .th-day.we{background:#163d5e;}
         .th-day.sun{background:#163d5e;min-width:85px;}
         .td.sun{background:#f0f2f5;}
@@ -1137,7 +1137,7 @@ elif seccion == "📅 Plantilla mensual":
         .td-apto{background:#2C5F8A;color:white;font-weight:700;padding:5px 14px;white-space:nowrap;
                  font-size:0.82rem;position:sticky;left:0;z-index:1;
                  border-right:2px solid #144070;border-bottom:1px solid #1a4a72;}
-        .td{padding:8px 0;border:1px solid #dde2ea;height:52px;vertical-align:middle;
+        .td{padding:0;border:1px solid #dde2ea;height:58px;vertical-align:middle;
             overflow:visible;position:relative;box-sizing:border-box;}
         .td.we{background:#eceff1;}
         .td.sun{background:#eceff1;}
@@ -1201,36 +1201,47 @@ elif seccion == "📅 Plantilla mensual":
                     # Bordes del TD: mismo color que la barra en las juntas → junta invisible
                     bl_td = f"1px solid {bg}" if prev_same else "1px solid #dde2ea"
                     br_td = f"1px solid {bg}" if next_same else "1px solid #dde2ea"
-                    # Posición absoluta de la barra: pega al borde en continuaciones
-                    left_px  = "0"   if prev_same else "4px"
-                    right_px = "0"   if next_same else "4px"
                     # Radio: redondeado solo en los extremos reales de la barra
                     if   not prev_same and not next_same: brad = "6px"
                     elif not prev_same:                   brad = "6px 0 0 6px"
                     elif not next_same:                   brad = "0 6px 6px 0"
                     else:                                 brad = "0"
-                    # Contenido: nombre solo en la primera celda visible
-                    if not prev_same:
-                        prefix  = "↩ " if c["edia"] == 0 else ""
-                        content = (
-                            f'<span style="font-size:0.76rem;font-weight:700;color:#fff;'
-                            f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
-                            f'{prefix}{c["nombre"]}</span>'
-                        )
-                        pad = "0 7px"
-                    else:
-                        content = ""
-                        pad     = "0"
                     tip = f"{c['nombre']} | {c['entrada']} → {c['salida']}"
-                    html += (
-                        f'<td class="td{wc}" style="padding:0;position:relative;'
-                        f'border-top:1px solid #dde2ea;border-bottom:1px solid #dde2ea;'
-                        f'border-left:{bl_td};border-right:{br_td};" title="{tip}">'
-                        f'<div style="position:absolute;top:5px;bottom:5px;left:{left_px};right:{right_px};'
-                        f'background:{bg};border-radius:{brad};overflow:hidden;'
-                        f'display:flex;align-items:center;padding:{pad};">'
-                        f'{content}</div></td>'
-                    )
+                    if not prev_same:
+                        # ── Primera celda visible: fondo de barra + etiqueta de nombre
+                        # z-index:2 hace que la etiqueta (overflow:visible) se pinte
+                        # por encima de los divs de barra de las celdas siguientes
+                        prefix    = "↩ " if c["edia"] == 0 else ""
+                        name_text = f"{prefix}{c['nombre']}"
+                        right_bar = "0" if next_same else "4px"
+                        html += (
+                            f'<td class="td{wc}" style="padding:0;position:relative;z-index:2;'
+                            f'border-top:1px solid #dde2ea;border-bottom:1px solid #dde2ea;'
+                            f'border-left:1px solid #dde2ea;border-right:{br_td};" title="{tip}">'
+                            # Fondo coloreado de la barra (clipeado en esta celda)
+                            f'<div style="position:absolute;top:6px;bottom:6px;left:4px;right:{right_bar};'
+                            f'background:{bg};border-radius:{brad};overflow:hidden;"></div>'
+                            # Etiqueta con nombre — overflow:visible → se extiende por las celdas contiguas
+                            f'<div style="position:absolute;top:6px;bottom:6px;left:12px;'
+                            f'display:flex;align-items:center;overflow:visible;white-space:nowrap;'
+                            f'pointer-events:none;">'
+                            f'<span style="font-size:0.82rem;font-weight:700;color:#fff;'
+                            f'text-shadow:0 1px 3px rgba(0,0,0,0.30);white-space:nowrap;">'
+                            f'{name_text}</span></div>'
+                            f'</td>'
+                        )
+                    else:
+                        # ── Celda de continuación: solo bloque de color, sin etiqueta ──
+                        left_bar  = "0"
+                        right_bar = "0" if next_same else "4px"
+                        html += (
+                            f'<td class="td{wc}" style="padding:0;position:relative;'
+                            f'border-top:1px solid #dde2ea;border-bottom:1px solid #dde2ea;'
+                            f'border-left:{bl_td};border-right:{br_td};" title="{tip}">'
+                            f'<div style="position:absolute;top:6px;bottom:6px;left:{left_bar};right:{right_bar};'
+                            f'background:{bg};border-radius:{brad};overflow:hidden;"></div>'
+                            f'</td>'
+                        )
                 elif c_out:
                     # ── Solo checkout ese día (sin nueva entrada) — media casilla superior ──
                     bo  = _bg(c_out["fuente"])
