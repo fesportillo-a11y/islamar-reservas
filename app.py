@@ -357,11 +357,22 @@ st.markdown("""
 }
 [data-testid="stSidebar"] .stMultiSelect [data-baseweb="select"] > div,
 [data-testid="stSidebar"] .stTextInput input {
-    background: rgba(255,255,255,0.05) !important;
-    border: 1px solid rgba(255,255,255,0.10) !important;
+    background: rgba(255,255,255,0.10) !important;
+    border: 1px solid rgba(255,255,255,0.18) !important;
     border-radius: 7px !important;
-    color: white !important;
-    font-size: 0.82rem !important;
+    color: #ffffff !important;
+    font-size: 1rem !important;
+    caret-color: #ffffff !important;
+}
+[data-testid="stSidebar"] .stTextInput input::placeholder {
+    color: rgba(255,255,255,0.45) !important;
+    font-size: 0.92rem !important;
+}
+[data-testid="stSidebar"] .stTextInput input:focus {
+    background: rgba(255,255,255,0.15) !important;
+    border-color: rgba(100,181,246,0.55) !important;
+    outline: none !important;
+    box-shadow: 0 0 0 2px rgba(100,181,246,0.20) !important;
 }
 [data-testid="stSidebar"] .stMultiSelect [data-baseweb="tag"] {
     background: rgba(100,181,246,0.25) !important;
