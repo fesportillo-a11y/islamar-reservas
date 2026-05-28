@@ -92,9 +92,85 @@ que puedes compartir con todo tu equipo.
 
 ---
 
+## PASO 5 · Cerrar la app con usuario y contraseña
+
+La app está protegida con login. Sin esta configuración, **nadie puede entrar** (la
+app muestra un aviso y se bloquea). Sigue estos pasos UNA sola vez por cada usuario
+que quieras dar de alta.
+
+### 5.1 Generar el hash de la contraseña
+
+En tu ordenador, dentro de la carpeta del repo:
+
+```
+pip install bcrypt
+python tools/hash_password.py
+```
+
+Te pedirá la contraseña dos veces (no se ve mientras la escribes) y devolverá algo
+como esto — **es el hash**, no la contraseña original:
+
+```
+password = "$2b$12$abcDEFghij...largo y único..."
+```
+
+Copia esa línea. Repite por cada usuario.
+
+### 5.2 Añadir la sección [auth] a los Secrets de Streamlit Cloud
+
+En Streamlit Cloud → tu app → **⋮ → Settings → Secrets**, **AÑADE** esto debajo de
+lo que ya tienes (no borres `SUPABASE_URL` ni `SUPABASE_KEY`):
+
+```toml
+[auth.cookie]
+name        = "islamar_auth_cookie"
+key         = "PEGA_AQUÍ_UNA_CADENA_LARGA_Y_ALEATORIA"
+expiry_days = 30
+
+[auth.credentials.usernames.festeban]
+email    = "festeban@esportillo.es"
+name     = "Francisco Esteban"
+password = "$2b$12$...el hash que generaste..."
+
+# Para añadir un segundo usuario, copia el bloque anterior con otro nombre:
+# [auth.credentials.usernames.juana]
+# email    = "juana@ejemplo.com"
+# name     = "Juana López"
+# password = "$2b$12$..."
+```
+
+- `name`: lo que se mostrará "👤 Francisco Esteban" en el sidebar.
+- El **nombre detrás de `usernames.`** (ej. `festeban`) es el USUARIO con el que
+  inicia sesión.
+- `key` de la cookie: cadena aleatoria larga. Si la cambias, todos los usuarios
+  tendrán que volver a iniciar sesión. Puedes generar una con:
+
+  ```
+  python -c "import secrets; print(secrets.token_urlsafe(48))"
+  ```
+
+### 5.3 Guardar y verificar
+
+Pulsa **Save** en Secrets. Streamlit Cloud reinicia la app en ~30 segundos.
+Al entrar, ahora verás la pantalla **"Iniciar sesión"**. Introduce el usuario y la
+contraseña ORIGINAL (no el hash). Si todo va bien, entras y aparece tu nombre y un
+botón "🚪 Cerrar sesión" en el sidebar.
+
+### 5.4 Añadir / quitar usuarios después
+
+Edita los Secrets de Streamlit Cloud:
+- **Añadir usuario**: copia el bloque `[auth.credentials.usernames.nuevo]` y pega
+  el hash de su contraseña.
+- **Quitar usuario**: borra su bloque entero.
+- **Cambiar contraseña**: genera nuevo hash con `tools/hash_password.py` y reemplaza
+  el valor de `password` del usuario.
+
+---
+
 ## ✅ Resultado final
 
 - La app funciona en cualquier navegador, móvil u ordenador.
+- Solo entran los usuarios registrados en los Secrets.
 - Los datos se guardan automáticamente en Supabase.
 - Cualquier cambio que haga uno del equipo lo ven todos al instante.
 - Puedes descargar el Excel actualizado en cualquier momento desde la propia app.

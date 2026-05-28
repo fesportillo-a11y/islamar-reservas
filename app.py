@@ -8,6 +8,7 @@ from openpyxl.utils import get_column_letter
 from datetime import datetime, date, timedelta
 import calendar
 import re
+import streamlit_authenticator as stauth
 
 # ─────────────────────────────────────────────
 # CONFIGURACIÓN
@@ -193,6 +194,73 @@ def get_supabase() -> Client:
     return create_client(url, key)
 
 supabase = get_supabase()
+
+# ─────────────────────────────────────────────
+# AUTENTICACIÓN
+# ─────────────────────────────────────────────
+# La configuración de usuarios vive en st.secrets["auth"] (ver GUIA_DESPLIEGUE.md).
+# Si la sección no existe, la app se bloquea con un mensaje claro: nadie entra
+# sin credenciales correctas, ni siquiera por accidente.
+
+def _build_authenticator():
+    try:
+        auth_cfg = st.secrets["auth"]
+    except (KeyError, FileNotFoundError):
+        st.error(
+            "⚠️ La autenticación no está configurada todavía. "
+            "Añade la sección [auth] en los Secrets de Streamlit Cloud. "
+            "Consulta GUIA_DESPLIEGUE.md, sección 5."
+        )
+        st.stop()
+
+    # Streamlit Secrets devuelve objetos AttrDict; los pasamos a dict planos
+    # porque streamlit-authenticator espera diccionarios mutables.
+    def _to_dict(obj):
+        if hasattr(obj, "to_dict"):
+            return obj.to_dict()
+        if isinstance(obj, dict):
+            return {k: _to_dict(v) for k, v in obj.items()}
+        return obj
+
+    credentials = _to_dict(auth_cfg["credentials"])
+    cookie      = _to_dict(auth_cfg["cookie"])
+
+    return stauth.Authenticate(
+        credentials,
+        cookie["name"],
+        cookie["key"],
+        int(cookie.get("expiry_days", 30)),
+    )
+
+authenticator = _build_authenticator()
+
+# Renderiza el formulario de login en el área principal
+try:
+    authenticator.login(
+        location="main",
+        fields={
+            "Form name": "Iniciar sesión",
+            "Username":  "Usuario",
+            "Password":  "Contraseña",
+            "Login":     "Entrar",
+        },
+    )
+except Exception as ex:
+    st.error(f"Error en el sistema de login: {ex}")
+    st.stop()
+
+auth_status = st.session_state.get("authentication_status")
+
+if auth_status is False:
+    st.error("Usuario o contraseña incorrectos.")
+    st.stop()
+elif auth_status is None:
+    st.info("🔒 Esta aplicación es privada. Introduce tus credenciales para entrar.")
+    st.stop()
+
+# A partir de aquí, el usuario está autenticado.
+USER_NAME     = st.session_state.get("name", "")
+USER_USERNAME = st.session_state.get("username", "")
 
 # ─────────────────────────────────────────────
 # FUNCIONES DE DATOS
@@ -468,13 +536,19 @@ with st.sidebar:
 
     # Logo
     st.image("logo.png", width=140)
-    st.markdown("""
-    <div style="text-align:center;padding:4px 10px 16px;border-bottom:1px solid rgba(255,255,255,0.07);margin-bottom:4px;">
+    st.markdown(f"""
+    <div style="text-align:center;padding:4px 10px 12px;border-bottom:1px solid rgba(255,255,255,0.07);margin-bottom:4px;">
         <span class="sb-logo-title">ESTEASUR 2015</span>
         <span style="font-size:0.72rem;color:rgba(100,181,246,0.8)!important;letter-spacing:1px;display:block;margin-top:2px;">ISLAMAR</span>
         <span class="sb-logo-sub">Gestión de Reservas</span>
+        <span style="display:block;margin-top:10px;font-size:0.75rem;color:rgba(255,255,255,0.7);">
+            👤 {USER_NAME or USER_USERNAME}
+        </span>
     </div>
     """, unsafe_allow_html=True)
+
+    # Botón de cierre de sesión
+    authenticator.logout("🚪 Cerrar sesión", location="sidebar")
 
     # Navegación
     st.markdown('<span class="sb-label">Navegación</span>', unsafe_allow_html=True)
