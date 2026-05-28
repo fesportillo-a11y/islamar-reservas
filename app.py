@@ -1248,24 +1248,32 @@ elif seccion == "📅 Plantilla mensual":
         html += '</tr>'
 
         # Paleta de 14 colores distintos y legibles — se asignan por ID de reserva
+        # Estos colores se aplican AL TEXTO del nombre (no al fondo). Todos son
+        # tonos oscuros y saturados, legibles sobre el fondo azul claro de la barra.
         _PALETA = [
-            "#2E6FA3",  # azul medio
+            "#1F4E79",  # azul corporativo (oscuro)
             "#C0622A",  # naranja tostado
             "#2E8B6E",  # verde esmeralda
             "#7B3FA0",  # violeta
             "#B5452A",  # rojo ladrillo
             "#1A7A6E",  # verde azulado oscuro
             "#A0522D",  # sienna
-            "#3A6B9E",  # azul acero
+            "#1B3A6B",  # azul marino
             "#7A5C00",  # ocre dorado
             "#5B3A8A",  # índigo
             "#2B7A4B",  # verde bosque
             "#8B3A62",  # frambuesa
-            "#3D6B8A",  # azul pizarra
+            "#2C4E70",  # azul pizarra oscuro
             "#6B5C2E",  # marrón kaki
         ]
 
-        def _bg(fuente, rid=0):
+        # Fondo azul claro uniforme para TODAS las barras de reservas.
+        # El color por reserva ya no es el fondo sino el TEXTO del nombre.
+        BAR_BG       = "#D0E8F7"   # azul claro (mismo tono que las filas separadoras)
+        BAR_BORDER   = "#7FB3D9"   # azul un poco más oscuro para el contorno
+
+        def _color_reserva(rid=0):
+            """Color del TEXTO del nombre del cliente, único por reserva."""
             return _PALETA[int(rid) % len(_PALETA)]
 
         for i, apto in enumerate(APTOS):
@@ -1283,18 +1291,18 @@ elif seccion == "📅 Plantilla mensual":
 
                 if split:
                     # ── Casilla dividida: checkout arriba / checkin abajo ──
-                    bo  = _bg(c_out["fuente"], c_out["id"])
-                    bi  = _bg(c["fuente"], c["id"])
+                    txt_out = _color_reserva(c_out["id"])
+                    txt_in  = _color_reserva(c["id"])
                     tip = f"SALE: {c_out['nombre']} ({c_out['salida']}) / ENTRA: {c['nombre']} ({c['entrada']})"
                     html += (
                         f'<td class="td{wc}" style="padding:0;position:relative;overflow:hidden;" title="{tip}">'
-                        f'<div style="position:absolute;top:0;left:0;right:0;height:50%;background:{bo};'
+                        f'<div style="position:absolute;top:0;left:0;right:0;height:50%;background:{BAR_BG};'
                         f'display:flex;align-items:center;overflow:hidden;">'
-                        f'<span style="color:#fff;font-size:0.74rem;font-weight:700;padding:0 6px;'
+                        f'<span style="color:{txt_out};font-size:0.74rem;font-weight:800;padding:0 6px;'
                         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">◀ {c_out["nombre"]}</span></div>'
-                        f'<div style="position:absolute;top:50%;left:0;right:0;height:50%;background:{bi};'
-                        f'border-top:2px solid #000;display:flex;align-items:center;overflow:hidden;">'
-                        f'<span style="color:#fff;font-size:0.74rem;font-weight:700;padding:0 6px;'
+                        f'<div style="position:absolute;top:50%;left:0;right:0;height:50%;background:{BAR_BG};'
+                        f'border-top:2px solid {BAR_BORDER};display:flex;align-items:center;overflow:hidden;">'
+                        f'<span style="color:{txt_in};font-size:0.74rem;font-weight:800;padding:0 6px;'
                         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">▶ {c["nombre"]}</span></div>'
                         f'</td>'
                     )
@@ -1312,7 +1320,7 @@ elif seccion == "📅 Plantilla mensual":
                         span_end += 1
                     colspan = span_end - d + 1
 
-                    bg             = _bg(c["fuente"], curr_rid)
+                    txt_color      = _color_reserva(curr_rid)
                     started_before = (c["edia"] == 0)       # empezó antes del mes
                     ends_after     = (c["sdia"] > n_dias)   # termina después del mes
 
@@ -1332,10 +1340,10 @@ elif seccion == "📅 Plantilla mensual":
                         f'<td class="td{wc}" colspan="{colspan}" '
                         f'style="padding:0;position:relative;overflow:hidden;" title="{tip}">'
                         f'<div style="position:absolute;top:6px;bottom:6px;'
-                        f'left:{left_px};right:{right_px};background:{bg};'
-                        f'border-radius:{brad};overflow:hidden;'
+                        f'left:{left_px};right:{right_px};background:{BAR_BG};'
+                        f'border:1px solid {BAR_BORDER};border-radius:{brad};overflow:hidden;'
                         f'display:flex;align-items:center;padding:0 10px;">'
-                        f'<span style="font-size:0.83rem;font-weight:700;color:#fff;'
+                        f'<span style="font-size:0.83rem;font-weight:800;color:{txt_color};'
                         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
                         f'{name_text}</span></div></td>'
                     )
@@ -1343,14 +1351,14 @@ elif seccion == "📅 Plantilla mensual":
 
                 elif c_out:
                     # ── Solo checkout ese día (sin nueva entrada) ──
-                    bo  = _bg(c_out["fuente"], c_out["id"])
+                    txt_out = _color_reserva(c_out["id"])
                     fbg = "#eaecef" if wd >= 5 else "#fafbfd"
                     tip = f"SALE: {c_out['nombre']} ({c_out['salida']})"
                     html += (
                         f'<td class="td{wc}" style="padding:0;position:relative;overflow:hidden;" title="{tip}">'
-                        f'<div style="position:absolute;top:0;left:0;right:0;height:50%;background:{bo};'
+                        f'<div style="position:absolute;top:0;left:0;right:0;height:50%;background:{BAR_BG};'
                         f'display:flex;align-items:center;overflow:hidden;">'
-                        f'<span style="color:#fff;font-size:0.74rem;font-weight:700;padding:0 6px;'
+                        f'<span style="color:{txt_out};font-size:0.74rem;font-weight:800;padding:0 6px;'
                         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">◀ {c_out["nombre"]}</span></div>'
                         f'<div style="position:absolute;top:50%;left:0;right:0;height:50%;'
                         f'background:{fbg};border-top:1px solid #bbb;overflow:hidden;"></div>'
@@ -1369,7 +1377,7 @@ elif seccion == "📅 Plantilla mensual":
 
         st.markdown("""
         <div style="display:flex;gap:14px;align-items:center;font-size:0.78rem;margin-bottom:6px;flex-wrap:wrap;">
-          <span style="color:#888;">Cada color identifica una reserva diferente &nbsp;|&nbsp;
+          <span style="color:#888;">El color del texto identifica cada reserva &nbsp;|&nbsp;
           ↩ Entró mes anterior &nbsp;|&nbsp; ◀/▶ Casilla dividida (salida/entrada mismo día) &nbsp;|&nbsp; Gris = fin de semana</span>
         </div>
         """, unsafe_allow_html=True)
