@@ -158,12 +158,70 @@ botón "🚪 Cerrar sesión" en el sidebar.
 
 ### 5.4 Añadir / quitar usuarios después
 
-Edita los Secrets de Streamlit Cloud:
+Tienes dos formas de hacerlo, según preferencia:
+
+**Forma fácil (recomendada): desde la propia app.**
+Una vez tengas creada la tabla `usuarios` (ver PASO 6), entras en la app como
+admin y vas a **👥 Usuarios** en el menú lateral. Desde ahí das de alta, cambias
+contraseñas o eliminas usuarios sin tocar Secrets.
+
+**Forma manual (Streamlit Cloud → Misterios):**
+Edita los Secrets:
 - **Añadir usuario**: copia el bloque `[auth.credentials.usernames.nuevo]` y pega
   el hash de su contraseña.
 - **Quitar usuario**: borra su bloque entero.
 - **Cambiar contraseña**: genera nuevo hash con `tools/hash_password.py` y reemplaza
   el valor de `password` del usuario.
+
+Los usuarios definidos en Misterios son "admins de rescate": siempre pueden entrar
+aunque la BD falle, y NO se pueden modificar desde la pantalla 👥 Usuarios.
+
+---
+
+## PASO 6 · Habilitar la gestión de usuarios desde la app
+
+Para poder gestionar usuarios desde la pantalla **👥 Usuarios** dentro de la app
+(en vez de tocar Misterios cada vez), hace falta crear una tabla en Supabase.
+Se hace UNA SOLA VEZ.
+
+### 6.1 Crear la tabla `usuarios`
+
+1. Entra en **https://supabase.com** y abre tu proyecto.
+2. Menú izquierdo → **"SQL Editor"** → **"New query"**.
+3. Pega esto y pulsa **"Run"**:
+
+```sql
+CREATE TABLE IF NOT EXISTS usuarios (
+  id            BIGSERIAL PRIMARY KEY,
+  username      TEXT UNIQUE NOT NULL,
+  nombre        TEXT,
+  email         TEXT,
+  password_hash TEXT NOT NULL,
+  rol           TEXT NOT NULL DEFAULT 'usuario',
+  activo        BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+Verás algo tipo `Success. No rows returned`.
+
+### 6.2 Usar la pantalla 👥 Usuarios
+
+Recarga tu app. Si estás logueado como admin (los usuarios de Misterios son
+admins automáticamente), te aparece **👥 Usuarios** en la barra lateral. Desde
+ahí:
+
+- **➕ Dar de alta**: usuario, nombre, email, rol (`usuario` o `admin`) y contraseña.
+- **📋 Lista de usuarios**: edita datos, cambia contraseñas, activa/desactiva
+  o elimina usuarios.
+
+La app no te dejará:
+- Borrarte a ti mismo.
+- Quedarte sin ningún administrador activo.
+
+Si quieres que cualquiera quite o añada usuarios sin necesidad de tocar Secrets,
+crea un primer usuario con `rol = admin` desde **👥 Usuarios** y pásale las
+credenciales por mensaje.
 
 ---
 

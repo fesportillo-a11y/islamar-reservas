@@ -8,6 +8,7 @@ from openpyxl.utils import get_column_letter
 from datetime import datetime, date, timedelta
 import calendar
 import re
+import bcrypt
 import streamlit_authenticator as stauth
 
 # ─────────────────────────────────────────────
@@ -196,11 +197,55 @@ def get_supabase() -> Client:
 supabase = get_supabase()
 
 # ─────────────────────────────────────────────
+# USUARIOS (en BD)
+# ─────────────────────────────────────────────
+# La tabla `usuarios` permite gestionar el acceso desde dentro de la app sin
+# tocar los Secrets de Streamlit. Los usuarios definidos en st.secrets["auth"]
+# siguen funcionando como "admins de rescate" — útiles para no quedarte fuera
+# si la BD falla.
+
+def cargar_usuarios_bd() -> list[dict]:
+    """Lista de usuarios definidos en la tabla `usuarios` de Supabase.
+    Devuelve [] si la tabla aún no existe (primer despliegue)."""
+    try:
+        resp = supabase.table("usuarios").select("*").order("username").execute()
+        return resp.data or []
+    except Exception:
+        return []
+
+def _hash_password(plain: str) -> str:
+    return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+def crear_usuario_bd(username: str, nombre: str, email: str,
+                     password_plain: str, rol: str = "usuario") -> None:
+    supabase.table("usuarios").insert({
+        "username":      username,
+        "nombre":        nombre,
+        "email":         email,
+        "password_hash": _hash_password(password_plain),
+        "rol":           rol,
+        "activo":        True,
+    }).execute()
+
+def actualizar_usuario_bd(user_id: int, datos: dict) -> None:
+    supabase.table("usuarios").update(datos).eq("id", user_id).execute()
+
+def cambiar_password_usuario_bd(user_id: int, password_plain: str) -> None:
+    supabase.table("usuarios").update(
+        {"password_hash": _hash_password(password_plain)}
+    ).eq("id", user_id).execute()
+
+def eliminar_usuario_bd(user_id: int) -> None:
+    supabase.table("usuarios").delete().eq("id", user_id).execute()
+
+# ─────────────────────────────────────────────
 # AUTENTICACIÓN
 # ─────────────────────────────────────────────
-# La configuración de usuarios vive en st.secrets["auth"] (ver GUIA_DESPLIEGUE.md).
-# Si la sección no existe, la app se bloquea con un mensaje claro: nadie entra
-# sin credenciales correctas, ni siquiera por accidente.
+# La configuración de usuarios vive en dos sitios:
+#   1) st.secrets["auth"] — "admins de rescate", definidos en Misterios.
+#   2) Tabla `usuarios` de Supabase — gestionables desde la propia app.
+# Si st.secrets["auth"] no existe, la app se bloquea con un mensaje claro:
+# nadie entra sin credenciales correctas, ni siquiera por accidente.
 
 def _build_authenticator():
     try:
@@ -223,16 +268,30 @@ def _build_authenticator():
         return obj
 
     credentials = _to_dict(auth_cfg["credentials"])
-    cookie      = _to_dict(auth_cfg["cookie"])
+    if "usernames" not in credentials or not isinstance(credentials["usernames"], dict):
+        credentials = {"usernames": {}}
+    bootstrap_admins = set(credentials["usernames"].keys())
 
-    return stauth.Authenticate(
+    # Fusionar usuarios de la BD (sobrescriben los de secrets si comparten nombre)
+    for u in cargar_usuarios_bd():
+        if not u.get("activo", True):
+            continue
+        credentials["usernames"][u["username"]] = {
+            "email":    u.get("email") or "",
+            "name":     u.get("nombre") or u["username"],
+            "password": u["password_hash"],
+        }
+
+    cookie = _to_dict(auth_cfg["cookie"])
+    auth = stauth.Authenticate(
         credentials,
         cookie["name"],
         cookie["key"],
         int(cookie.get("expiry_days", 30)),
     )
+    return auth, bootstrap_admins
 
-authenticator = _build_authenticator()
+authenticator, BOOTSTRAP_ADMINS = _build_authenticator()
 
 # Renderiza el formulario de login en el área principal
 try:
@@ -261,6 +320,17 @@ elif auth_status is None:
 # A partir de aquí, el usuario está autenticado.
 USER_NAME     = st.session_state.get("name", "")
 USER_USERNAME = st.session_state.get("username", "")
+
+def _es_admin(username: str) -> bool:
+    """Admin si está en st.secrets["auth"] o tiene rol='admin' en la BD."""
+    if username in BOOTSTRAP_ADMINS:
+        return True
+    for u in cargar_usuarios_bd():
+        if u["username"] == username and u.get("rol") == "admin" and u.get("activo", True):
+            return True
+    return False
+
+IS_ADMIN = _es_admin(USER_USERNAME)
 
 # ─────────────────────────────────────────────
 # FUNCIONES DE DATOS
@@ -552,14 +622,17 @@ with st.sidebar:
 
     # Navegación
     st.markdown('<span class="sb-label">Navegación</span>', unsafe_allow_html=True)
-    seccion = st.radio("nav", [
+    _secciones_nav = [
         "📊 Reservas",
         "💰 Resumen de ventas",
         "📅 Plantilla mensual",
         "📥 Importar Booking",
         "➕ Nueva reserva",
         "✏️ Editar reserva",
-    ], label_visibility="collapsed")
+    ]
+    if IS_ADMIN:
+        _secciones_nav.append("👥 Usuarios")
+    seccion = st.radio("nav", _secciones_nav, label_visibility="collapsed")
 
     # Filtros
     st.markdown('<span class="sb-label">Filtros</span>', unsafe_allow_html=True)
@@ -2275,3 +2348,269 @@ elif seccion == "📥 Importar Booking":
 
         except Exception as e:
             st.error(f"Error al procesar el archivo: {e}")
+
+# ─────────────────────────────────────────────
+# SECCIÓN: USUARIOS (solo admins)
+# ─────────────────────────────────────────────
+elif seccion == "👥 Usuarios":
+    if not IS_ADMIN:
+        st.error("⛔ No tienes permiso para acceder a esta sección.")
+        st.stop()
+
+    st.markdown("### 👥 Gestión de usuarios")
+    st.caption(
+        "Da de alta, edita o elimina usuarios. Solo los administradores ven esta sección. "
+        "Los administradores de rescate (los definidos en Streamlit Cloud → Misterios) no se "
+        "tocan desde aquí — para modificarlos hay que editar los Secrets."
+    )
+
+    usuarios_bd = cargar_usuarios_bd()
+    usernames_bd = {u["username"] for u in usuarios_bd}
+
+    # Métricas rápidas
+    n_total   = len(usuarios_bd) + len(BOOTSTRAP_ADMINS)
+    n_admins  = sum(1 for u in usuarios_bd if u.get("rol") == "admin" and u.get("activo", True)) + len(BOOTSTRAP_ADMINS)
+    n_activos = sum(1 for u in usuarios_bd if u.get("activo", True)) + len(BOOTSTRAP_ADMINS)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Usuarios totales", n_total)
+    c2.metric("Administradores",  n_admins)
+    c3.metric("Activos",          n_activos)
+
+    tab_lista, tab_alta = st.tabs(["📋 Lista de usuarios", "➕ Dar de alta"])
+
+    # ── TAB: LISTA ─────────────────────────────
+    with tab_lista:
+        if BOOTSTRAP_ADMINS:
+            st.markdown("**🛡️ Administradores de rescate** (configurados en Misterios)")
+            for u in sorted(BOOTSTRAP_ADMINS):
+                marca = "  · ⭐ tú" if u == USER_USERNAME else ""
+                st.markdown(f"- `{u}`{marca}")
+            st.caption(
+                "Para editar o eliminar estos usuarios, ve a Streamlit Cloud → "
+                "Settings → Misterios."
+            )
+            st.divider()
+
+        st.markdown("**👤 Usuarios en base de datos**")
+        if not usuarios_bd:
+            st.info(
+                "No hay usuarios en la BD todavía. Crea el primero en la "
+                "pestaña **'Dar de alta'**."
+            )
+        else:
+            for u in usuarios_bd:
+                emoji_estado = "🟢" if u.get("activo", True) else "🔴"
+                rol_lbl = (u.get("rol") or "usuario").upper()
+                titulo  = (f"{emoji_estado} **{u['username']}** — "
+                           f"{u.get('nombre') or '(sin nombre)'} · "
+                           f"{rol_lbl}")
+                if u["username"] == USER_USERNAME:
+                    titulo += "  · ⭐ tú"
+
+                with st.expander(titulo):
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        nuevo_nombre = st.text_input(
+                            "Nombre", value=u.get("nombre") or "",
+                            key=f"nom_{u['id']}",
+                        )
+                        nuevo_email  = st.text_input(
+                            "Email", value=u.get("email") or "",
+                            key=f"em_{u['id']}",
+                        )
+                    with col_b:
+                        rol_actual = (u.get("rol") or "usuario")
+                        nuevo_rol = st.selectbox(
+                            "Rol", ["usuario", "admin"],
+                            index=0 if rol_actual == "usuario" else 1,
+                            key=f"rol_{u['id']}",
+                        )
+                        nuevo_activo = st.toggle(
+                            "Activo", value=u.get("activo", True),
+                            key=f"act_{u['id']}",
+                        )
+
+                    if st.button("💾 Guardar cambios",
+                                 key=f"save_{u['id']}",
+                                 use_container_width=True):
+                        cambios = {}
+                        if nuevo_nombre != (u.get("nombre") or ""):
+                            cambios["nombre"] = nuevo_nombre
+                        if nuevo_email != (u.get("email") or ""):
+                            cambios["email"] = nuevo_email
+                        if nuevo_rol != rol_actual:
+                            cambios["rol"] = nuevo_rol
+                        if nuevo_activo != u.get("activo", True):
+                            cambios["activo"] = nuevo_activo
+
+                        # Protección: que no se quede la app sin admins activos
+                        admins_restantes = (
+                            sum(1 for x in usuarios_bd
+                                if x["id"] != u["id"]
+                                and x.get("rol") == "admin"
+                                and x.get("activo", True))
+                            + len(BOOTSTRAP_ADMINS)
+                        )
+                        peligro = (
+                            (rol_actual == "admin" and cambios.get("rol") == "usuario") or
+                            (u.get("activo", True) and cambios.get("activo") is False and rol_actual == "admin")
+                        )
+                        if peligro and admins_restantes == 0:
+                            st.error(
+                                "⛔ No puedes hacer este cambio: dejaría la app sin ningún "
+                                "administrador. Crea otro admin primero."
+                            )
+                        elif cambios:
+                            try:
+                                actualizar_usuario_bd(u["id"], cambios)
+                                st.success("✅ Cambios guardados.")
+                                st.rerun()
+                            except Exception as ex:
+                                st.error(f"Error al guardar: {ex}")
+                        else:
+                            st.info("No hay cambios que guardar.")
+
+                    st.markdown("---")
+                    st.markdown("**🔑 Cambiar contraseña**")
+                    new_pwd1 = st.text_input(
+                        "Nueva contraseña", type="password",
+                        key=f"pwd1_{u['id']}",
+                    )
+                    new_pwd2 = st.text_input(
+                        "Repite la contraseña", type="password",
+                        key=f"pwd2_{u['id']}",
+                    )
+                    if st.button("🔑 Cambiar contraseña",
+                                 key=f"chpwd_{u['id']}",
+                                 use_container_width=True):
+                        if not new_pwd1:
+                            st.warning("La contraseña no puede estar vacía.")
+                        elif new_pwd1 != new_pwd2:
+                            st.warning("Las dos contraseñas no coinciden.")
+                        elif len(new_pwd1) < 6:
+                            st.warning("La contraseña debe tener al menos 6 caracteres.")
+                        else:
+                            try:
+                                cambiar_password_usuario_bd(u["id"], new_pwd1)
+                                st.success("✅ Contraseña actualizada.")
+                            except Exception as ex:
+                                st.error(f"Error: {ex}")
+
+                    st.markdown("---")
+                    admins_si_borro = (
+                        sum(1 for x in usuarios_bd
+                            if x["id"] != u["id"]
+                            and x.get("rol") == "admin"
+                            and x.get("activo", True))
+                        + len(BOOTSTRAP_ADMINS)
+                    )
+                    if u["username"] == USER_USERNAME:
+                        st.info("No puedes eliminarte a ti mismo.")
+                    elif rol_actual == "admin" and admins_si_borro == 0:
+                        st.info(
+                            "No puedes eliminar al único administrador activo. "
+                            "Crea otro admin primero."
+                        )
+                    else:
+                        confirm_key = f"_confirm_del_user_{u['id']}"
+                        if not st.session_state.get(confirm_key):
+                            if st.button(
+                                f"🗑️ Eliminar usuario {u['username']}",
+                                key=f"del_{u['id']}",
+                                use_container_width=True,
+                            ):
+                                st.session_state[confirm_key] = True
+                                st.rerun()
+                        else:
+                            st.warning(
+                                f"¿Seguro que quieres eliminar a **{u['username']}**? "
+                                "Esta acción no se puede deshacer."
+                            )
+                            col_si, col_no = st.columns(2)
+                            if col_si.button("✅ Sí, eliminar",
+                                             type="primary",
+                                             use_container_width=True,
+                                             key=f"delok_{u['id']}"):
+                                try:
+                                    eliminar_usuario_bd(u["id"])
+                                    st.session_state[confirm_key] = False
+                                    st.success(f"✅ Usuario {u['username']} eliminado.")
+                                    st.rerun()
+                                except Exception as ex:
+                                    st.error(f"Error: {ex}")
+                            if col_no.button("Cancelar",
+                                             use_container_width=True,
+                                             key=f"delno_{u['id']}"):
+                                st.session_state[confirm_key] = False
+                                st.rerun()
+
+    # ── TAB: DAR DE ALTA ──────────────────────
+    with tab_alta:
+        st.markdown("**Crear un usuario nuevo**")
+        with st.form("crear_usuario_form", clear_on_submit=True):
+            col_x, col_y = st.columns(2)
+            with col_x:
+                new_username = st.text_input(
+                    "Usuario", placeholder="ej. juana",
+                    help="En minúsculas, sin espacios. Solo letras, números y _."
+                )
+                new_nombre = st.text_input(
+                    "Nombre completo", placeholder="Juana López",
+                )
+            with col_y:
+                new_email = st.text_input(
+                    "Email", placeholder="juana@ejemplo.com",
+                )
+                new_rol = st.selectbox(
+                    "Rol", ["usuario", "admin"],
+                    help="'admin' puede entrar a esta sección y gestionar usuarios.",
+                )
+
+            col_p1, col_p2 = st.columns(2)
+            with col_p1:
+                new_pwd_a = st.text_input(
+                    "Contraseña", type="password",
+                    help="Mínimo 6 caracteres.",
+                )
+            with col_p2:
+                new_pwd_b = st.text_input(
+                    "Repite la contraseña", type="password",
+                )
+
+            submitted = st.form_submit_button(
+                "➕ Crear usuario",
+                type="primary",
+                use_container_width=True,
+            )
+            if submitted:
+                username_clean = (new_username or "").strip().lower()
+                if not username_clean:
+                    st.error("El usuario es obligatorio.")
+                elif not re.match(r"^[a-z0-9_]+$", username_clean):
+                    st.error(
+                        "El usuario solo puede contener letras minúsculas, números y _."
+                    )
+                elif username_clean in usernames_bd or username_clean in BOOTSTRAP_ADMINS:
+                    st.error(f"El usuario '{username_clean}' ya existe.")
+                elif not new_pwd_a:
+                    st.error("La contraseña es obligatoria.")
+                elif new_pwd_a != new_pwd_b:
+                    st.error("Las dos contraseñas no coinciden.")
+                elif len(new_pwd_a) < 6:
+                    st.error("La contraseña debe tener al menos 6 caracteres.")
+                else:
+                    try:
+                        crear_usuario_bd(
+                            username=username_clean,
+                            nombre=(new_nombre or "").strip(),
+                            email=(new_email or "").strip(),
+                            password_plain=new_pwd_a,
+                            rol=new_rol,
+                        )
+                        st.success(
+                            f"✅ Usuario **{username_clean}** creado. "
+                            "Ya puede iniciar sesión con la contraseña que has indicado."
+                        )
+                        st.balloons()
+                    except Exception as ex:
+                        st.error(f"Error al crear usuario: {ex}")
