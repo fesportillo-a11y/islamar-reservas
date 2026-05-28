@@ -67,6 +67,25 @@ _ESTADOS_CANCELADOS = {
     "guest_cancelled", "annul",
 }
 
+def parse_eur(v) -> "float | None":
+    """Convierte '211,20 €' / '211.2 EUR' / '0' / 211.2 → float. None si no se puede."""
+    if v is None:
+        return None
+    try:
+        s = str(v).strip().replace("€", "").replace("EUR", "").replace(" ", "")
+        if not s or s.lower() in ("nan", "none"):
+            return None
+        return float(s.replace(",", "."))
+    except Exception:
+        return None
+
+def format_eur(v) -> str:
+    """Convierte 211.2 → '211,20 €'. Devuelve '' si v es None/vacío/no numérico."""
+    f = parse_eur(v)
+    if f is None:
+        return ""
+    return f"{f:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " €"
+
 def es_cancelada(estado_str: str) -> bool:
     """True si el estado indica que la reserva está cancelada o es un no-show."""
     t = str(estado_str).lower().strip()
@@ -1378,7 +1397,7 @@ elif seccion == "📅 Plantilla mensual":
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("Entrada", celda["entrada"])
                 m2.metric("Salida",  celda["salida"])
-                m3.metric("Precio",  f"{celda['precio']} €" if celda["precio"] else "—")
+                m3.metric("Precio",  format_eur(celda['precio']) or "—")
                 m4.metric("Estado",  celda["estado_pago"] or "—")
                 with st.expander("✏️ Editar esta reserva", expanded=False):
                     r_data = df[df["id"] == celda["id"]]
@@ -1667,24 +1686,34 @@ elif seccion == "📥 Importar Booking":
 
             # Mapeo de columnas Booking → nuestra BD
             COL_MAP = {
-                "nro_reserva":  ["Número de reserva", "Numero de reserva"],
-                "nombre":       ["Nombre del cliente (o clientes)", "Nombre del cliente"],
-                "entrada":      ["Entrada"],
-                "salida":       ["Salida"],
-                "noches":       ["Duración (noches)", "Duracion (noches)"],
-                "personas":     ["Personas", "Adultos"],
-                "habitaciones": ["Habitaciones", "Rooms", "Unidades", "Nº de habitaciones",
-                                 "Numero de habitaciones", "Número de habitaciones"],
-                "precio":       ["Precio"],
-                "estado_pago":  ["Estado del pago", "Estado de pago", "Estado",
-                                 "Status", "Payment status", "Booking status",
-                                 "Reservation status", "Estado reserva"],
-                "comentarios":  ["Comentarios"],
-                "tipo_unidad":  ["Tipo de unidad", "Tipo de habitación", "Room type",
-                                 "Tipo de alojamiento"],
+                "nro_reserva":   ["Número de reserva", "Numero de reserva"],
+                "nombre":        ["Nombre del cliente (o clientes)", "Nombre del cliente"],
+                "entrada":       ["Entrada"],
+                "salida":        ["Salida"],
+                "fecha_reserva": ["Fecha de reserva", "Booking date", "Reservation date"],
+                "noches":        ["Duración (noches)", "Duracion (noches)"],
+                "personas":      ["Personas", "Adultos"],
+                "habitaciones":  ["Habitaciones", "Rooms", "Unidades", "Nº de habitaciones",
+                                  "Numero de habitaciones", "Número de habitaciones"],
+                "precio":        ["Precio"],
+                "estado_pago":   ["Estado del pago", "Estado de pago",
+                                  "Payment status"],
+                "estado_reserva":["Estado", "Status", "Booking status",
+                                  "Reservation status", "Estado reserva"],
+                "fecha_cancel":  ["Fecha de cancelación", "Fecha de cancelacion",
+                                  "Cancellation date"],
+                "comentarios":   ["Comentarios"],
+                "tipo_unidad":   ["Tipo de unidad", "Tipo de habitación", "Room type",
+                                  "Tipo de alojamiento"],
             }
 
             def get_col(df_bk, opciones):
+                # 1) igualdad exacta (case-insensitive)
+                for op in opciones:
+                    for c in df_bk.columns:
+                        if op.lower() == c.lower():
+                            return c
+                # 2) substring (fallback tolerante)
                 for op in opciones:
                     for c in df_bk.columns:
                         if op.lower() in c.lower():
@@ -1698,14 +1727,18 @@ elif seccion == "📥 Importar Booking":
                     return ""
 
             def fmt_fecha(v):
+                """Acepta '2026-05-25', '2026-05-18 09:14:02', Timestamps, etc.
+                Devuelve dd/mm/yyyy o '' si v es vacío/None/NaN."""
+                if v is None or v == "" or (isinstance(v, float) and pd.isna(v)):
+                    return ""
                 try:
                     if isinstance(v, str):
                         d = datetime.strptime(v.strip()[:10], "%Y-%m-%d")
                     else:
                         d = pd.Timestamp(v).to_pydatetime()
                     return d.strftime("%d/%m/%Y")
-                except:
-                    return str(v)
+                except Exception:
+                    return ""
 
             canceladas_excel = []   # filas del Excel marcadas como canceladas
 
@@ -1733,19 +1766,31 @@ elif seccion == "📥 Importar Booking":
                     continue
 
                 # ── Filtrar canceladas ANTES de procesar ─────────────────
-                estado_raw = str(g("estado_pago")).strip()
-                if es_cancelada(estado_raw):
+                # Booking marca canceladas en la columna "Estado" (cancelled_by_guest…),
+                # NO en "Estado del pago" (que viene vacío). También miramos "Fecha de
+                # cancelación": si tiene valor, la reserva está cancelada.
+                estado_pago_raw     = str(g("estado_pago")).strip()
+                estado_reserva_raw  = str(g("estado_reserva")).strip()
+                fecha_cancel_raw    = str(g("fecha_cancel")).strip()
+                tiene_fecha_cancel  = bool(fecha_cancel_raw) and fecha_cancel_raw.lower() not in ("nan", "none", "")
+                if (es_cancelada(estado_reserva_raw)
+                        or es_cancelada(estado_pago_raw)
+                        or tiene_fecha_cancel):
                     canceladas_excel.append({
                         "nro_reserva": nro,
                         "nombre":      str(g("nombre")).strip().title(),
                         "entrada":     fmt_fecha(g("entrada")),
                         "salida":      fmt_fecha(g("salida")),
-                        "estado":      estado_raw,
+                        "estado":      estado_reserva_raw or estado_pago_raw or "cancelled",
                     })
                     continue   # ← no importar reservas canceladas
 
-                entrada_str = fmt_fecha(g("entrada"))
-                salida_str  = fmt_fecha(g("salida"))
+                # Para el resto del procesamiento, conservar nombre interno
+                estado_raw = estado_pago_raw
+
+                entrada_str    = fmt_fecha(g("entrada"))
+                salida_str     = fmt_fecha(g("salida"))
+                fecha_reserva  = fmt_fecha(g("fecha_reserva"))
 
                 try:
                     e_date  = datetime.strptime(entrada_str, "%d/%m/%Y")
@@ -1762,15 +1807,25 @@ elif seccion == "📥 Importar Booking":
                 except:
                     noches_val = calcular_noches(entrada_str, salida_str)
 
-                precio_raw = limpiar_precio(g("precio"))
+                precio_raw   = limpiar_precio(g("precio"))
+                precio_total = parse_eur(precio_raw)   # float o None
 
                 # estado_raw ya leído arriba; traducir al valor interno
-                if "booking" in estado_raw.lower():
-                    estado_val = "Pago mediante Booking.com"
+                # Criterio entrevista: "Pago mediante Booking.com" → "PAGADO";
+                # vacío → "PENDIENTE". Mantiene la convención mayúscula del resto
+                # de la app (ver lista ESTADOS).
+                if estado_raw and "booking" in estado_raw.lower():
+                    estado_val = "PAGADO"
+                    pagado     = True
                 elif estado_raw.lower() in ("ok", "pagado"):
                     estado_val = "PAGADO"
+                    pagado     = True
+                elif not estado_raw or estado_raw.lower() in ("nan", "none", ""):
+                    estado_val = "PENDIENTE"
+                    pagado     = False
                 else:
                     estado_val = estado_raw
+                    pagado     = False
 
                 # Número de habitaciones reservadas
                 try:
@@ -1778,22 +1833,22 @@ elif seccion == "📥 Importar Booking":
                 except:
                     n_hab = 1
 
-                # ── Tipo de unidad → match directo con apartamento ──────────
+                # ── Tipo de unidad → puede traer varios separados por coma ─────
+                # Ej: "Two-Bedroom Apartment, One-Bedroom Apartment". Si la lista
+                # de tipos es menor que n_hab, repetimos el último para cubrir.
                 tipo_unidad_raw = str(g("tipo_unidad")).strip()
-                apto_directo    = match_apto_directo(tipo_unidad_raw)
+                tipos_unidad = [t.strip() for t in tipo_unidad_raw.split(",") if t.strip()]
+                if not tipos_unidad:
+                    tipos_unidad = [""]
+                while len(tipos_unidad) < n_hab:
+                    tipos_unidad.append(tipos_unidad[-1])
 
-                if apto_directo:
-                    # "Tipo de unidad" es el nombre exacto del apartamento
-                    tipo_dorm = dorm_desde_nombre_apto(apto_directo)
-                else:
-                    # Fallback: clasificación genérica por descripción
-                    tipo_dorm = clasificar_dormitorios(tipo_unidad_raw)
-
-                # Precio por apartamento (dividido si son varias habitaciones)
+                # Personas totales (las repartimos: total en fila 1, 0 en las demás)
+                personas_raw = str(g("personas")).replace(".0", "").strip()
                 try:
-                    precio_unit = str(round(float(precio_raw) / n_hab, 2)) if precio_raw else ""
-                except:
-                    precio_unit = precio_raw
+                    personas_total = int(float(personas_raw)) if personas_raw not in ("", "nan") else 0
+                except Exception:
+                    personas_total = 0
 
                 base = {
                     "nro_reserva": nro,
@@ -1804,45 +1859,73 @@ elif seccion == "📥 Importar Booking":
                     "entrada":     entrada_str,
                     "salida":      salida_str,
                     "noches":      noches_val,
-                    "personas":    str(g("personas")).replace(".0", ""),
-                    "dormitorios": tipo_dorm,
                     "estado_pago": estado_val,
                     "comentarios": str(g("comentarios")) if g("comentarios") else "",
                 }
 
-                # ── Asignación de apartamentos ───────────────────────────────
-                if apto_directo and f_ent and f_sal:
-                    # Match directo: intentar asignar el apartamento conocido
-                    # Si está libre → usarlo; si ocupado → buscar mismo tipo
-                    if apto_libre(apto_directo, f_ent, f_sal, df_asignados):
-                        aptos_ok = [apto_directo] * n_hab
+                # ── Una fila por habitación ─────────────────────────────────
+                # Cada fila se asigna individualmente para respetar tipos distintos.
+                # idx_hab == 0 lleva valores reales (precio, personas, pago…);
+                # las siguientes llevan "0,00 €" y 0 personas (criterio entrevista).
+                for idx_hab in range(n_hab):
+                    tipo_unit_i = tipos_unidad[idx_hab]
+                    apto_directo_i = match_apto_directo(tipo_unit_i)
+                    if apto_directo_i:
+                        tipo_dorm_i = dorm_desde_nombre_apto(apto_directo_i)
                     else:
-                        aptos_ok = asignar_aptos_auto(tipo_dorm, f_ent, f_sal,
-                                                      n_hab, df_asignados)
-                elif f_ent and f_sal:
-                    aptos_ok = asignar_aptos_auto(tipo_dorm, f_ent, f_sal,
-                                                  n_hab, df_asignados)
-                else:
-                    aptos_ok = [apto_directo] if apto_directo else []
+                        tipo_dorm_i = clasificar_dormitorios(tipo_unit_i)
 
-                # Crear una fila por apartamento asignado; si faltan, fila sin asignar
-                aptos_para_crear = aptos_ok if aptos_ok else [""] * n_hab
-                for idx_hab, apto in enumerate(aptos_para_crear):
+                    # Asignar apartamento concreto
+                    if apto_directo_i and f_ent and f_sal:
+                        apto_i = apto_directo_i if apto_libre(apto_directo_i, f_ent, f_sal, df_asignados) else ""
+                        if not apto_i:
+                            libres = asignar_aptos_auto(tipo_dorm_i, f_ent, f_sal, 1, df_asignados)
+                            apto_i = libres[0] if libres else ""
+                    elif f_ent and f_sal:
+                        libres = asignar_aptos_auto(tipo_dorm_i, f_ent, f_sal, 1, df_asignados)
+                        apto_i = libres[0] if libres else (apto_directo_i or "")
+                    else:
+                        apto_i = apto_directo_i or ""
+
+                    # Valores que dependen de la posición de la fila
+                    es_primera = (idx_hab == 0)
+                    if es_primera:
+                        precio_fila   = format_eur(precio_total) if precio_total is not None else ""
+                        personas_fila = str(personas_total) if personas_total else ""
+                        if pagado:
+                            pago_cta_fila   = format_eur(precio_total) if precio_total is not None else ""
+                            resto_pdte_fila = "0,00 €"
+                            fecha_ing_fila  = fecha_reserva
+                        else:
+                            pago_cta_fila   = ""
+                            resto_pdte_fila = ""
+                            fecha_ing_fila  = ""
+                    else:
+                        precio_fila     = "0,00 €"
+                        personas_fila   = "0"
+                        pago_cta_fila   = "0,00 €" if pagado else ""
+                        resto_pdte_fila = "0,00 €" if pagado else ""
+                        fecha_ing_fila  = fecha_reserva if pagado else ""
+
                     nro_ext = f"{nro}-{idx_hab+1}" if n_hab > 1 else nro
                     fila = {**base,
-                            "nro_reserva": nro_ext,
-                            "precio":      precio_unit,
-                            "apartamento": apto}
+                            "nro_reserva":   nro_ext,
+                            "apartamento":   apto_i,
+                            "dormitorios":   tipo_dorm_i,
+                            "precio":        precio_fila,
+                            "personas":      personas_fila,
+                            "pago_cta":      pago_cta_fila,
+                            "resto_pdte":    resto_pdte_fila,
+                            "fecha_ingreso": fecha_ing_fila}
                     filas.append(fila)
-                    # Registrar en df_asignados para el siguiente apartamento del batch
-                    if apto:
+                    # Registrar en df_asignados para que el siguiente apto del batch lo tenga en cuenta
+                    if apto_i:
                         nuevo_reg = pd.DataFrame([{
-                            "apartamento": apto,
+                            "apartamento": apto_i,
                             "entrada":     entrada_str,
                             "salida":      salida_str,
                         }])
-                        df_asignados = pd.concat([df_asignados, nuevo_reg],
-                                                 ignore_index=True)
+                        df_asignados = pd.concat([df_asignados, nuevo_reg], ignore_index=True)
 
             df_bk = pd.DataFrame(filas) if filas else pd.DataFrame()
 
@@ -1856,6 +1939,58 @@ elif seccion == "📥 Importar Booking":
                 nuevas   = pd.DataFrame()
                 ya_exist = pd.DataFrame()
 
+            # ── Sobrescritura selectiva: detectar cuáles ya existentes han cambiado ─
+            # Solo se comparan/actualizan las columnas "de Booking". Los campos manuales
+            # (pago_cta, fecha_ingreso, resto_pdte, estado_pago, comentarios, apartamento)
+            # se respetan SIEMPRE en la reserva existente.
+            CAMPOS_UPDATE = ["nombre", "entrada", "salida", "noches", "personas",
+                             "precio", "dormitorios", "mes", "mes_num"]
+
+            def _norm(campo, v):
+                """Normaliza para comparar entre BD y nuevo import."""
+                if v is None:
+                    return ""
+                if campo == "precio":
+                    f = parse_eur(v)
+                    return round(f, 2) if f is not None else ""
+                if campo in ("noches", "mes_num", "personas"):
+                    try:
+                        s = str(v).strip().replace(".0", "")
+                        return int(float(s)) if s and s.lower() != "nan" else 0
+                    except Exception:
+                        return 0
+                return str(v).strip()
+
+            updates_plan = []   # [{ "id": ..., "cambios": {campo: (antes, ahora)}, "fila_nueva": ... }]
+            sin_cambios  = []   # filas que ya existen y coinciden
+            if not ya_exist.empty and not df.empty:
+                df_idx = df.set_index(df["nro_reserva"].astype(str))
+                for _, fila_nueva in ya_exist.iterrows():
+                    nro_e = str(fila_nueva["nro_reserva"])
+                    if nro_e not in df_idx.index:
+                        continue
+                    fila_bd = df_idx.loc[nro_e]
+                    if isinstance(fila_bd, pd.DataFrame):
+                        fila_bd = fila_bd.iloc[0]   # por si hay varias filas con el mismo Nº
+                    cambios = {}
+                    for c in CAMPOS_UPDATE:
+                        antes = _norm(c, fila_bd.get(c))
+                        ahora = _norm(c, fila_nueva.get(c))
+                        if antes != ahora:
+                            cambios[c] = (antes, ahora)
+                    if cambios:
+                        updates_plan.append({
+                            "id":          int(fila_bd["id"]),
+                            "nro_reserva": nro_e,
+                            "nombre":      fila_bd.get("nombre", ""),
+                            "cambios":     cambios,
+                            "fila_nueva":  fila_nueva,
+                        })
+                    else:
+                        sin_cambios.append(fila_nueva)
+            else:
+                sin_cambios = [r for _, r in ya_exist.iterrows()]
+
             # ── Canceladas del Excel que ya están guardadas en la BD ───────
             canceladas_en_bd = []
             if canceladas_excel and not df.empty:
@@ -1868,11 +2003,12 @@ elif seccion == "📥 Importar Booking":
                         canceladas_en_bd.append(r)
 
             # ── Resumen métricas ────────────────────────────────────────────
-            col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+            col_r1, col_r2, col_r3, col_r4, col_r5 = st.columns(5)
             col_r1.metric("Válidas en el archivo",     len(df_bk))
             col_r2.metric("✅ Nuevas a importar",       len(nuevas),  delta=f"+{len(nuevas)}")
-            col_r3.metric("⚠️ Ya existentes",           len(ya_exist))
-            col_r4.metric("🚫 Canceladas (excluidas)",  len(canceladas_excel))
+            col_r3.metric("🔄 Con cambios",             len(updates_plan))
+            col_r4.metric("= Sin cambios",              len(sin_cambios))
+            col_r5.metric("🚫 Canceladas (excluidas)",  len(canceladas_excel))
 
             # ── Panel de canceladas que están en la BD ──────────────────────
             if canceladas_en_bd:
@@ -1908,6 +2044,50 @@ elif seccion == "📥 Importar Booking":
                     f"ℹ️ {len(canceladas_excel)} reserva(s) cancelada(s) en el archivo "
                     f"— ninguna estaba guardada en la aplicación."
                 )
+
+            # ── Panel de reservas existentes con cambios ────────────────────
+            if updates_plan:
+                st.markdown("---")
+                st.warning(
+                    f"🔄 **{len(updates_plan)} reserva(s)** ya guardadas tienen cambios en Booking.com. "
+                    f"Solo se actualizarán las columnas de Booking — los campos manuales "
+                    f"(pago a cuenta, fecha de ingreso, resto pendiente, estado de pago, comentarios, "
+                    f"apartamento asignado) se respetarán."
+                )
+                resumen_updates = []
+                for u in updates_plan:
+                    descripcion = " · ".join(
+                        f"{k}: {a!r} → {n!r}" for k, (a, n) in u["cambios"].items()
+                    )
+                    resumen_updates.append({
+                        "Nº Reserva":  u["nro_reserva"],
+                        "Nombre":      u["nombre"],
+                        "Cambios":     descripcion,
+                    })
+                st.dataframe(pd.DataFrame(resumen_updates),
+                             use_container_width=True, hide_index=True,
+                             column_config={
+                                 "Nº Reserva": st.column_config.TextColumn(width=130),
+                                 "Nombre":     st.column_config.TextColumn(width=190),
+                                 "Cambios":    st.column_config.TextColumn(width=600),
+                             })
+                if st.button(f"🔄 Aplicar cambios a {len(updates_plan)} reserva(s)",
+                             type="primary", use_container_width=True, key="btn_apply_updates"):
+                    aplicados = 0
+                    errores_upd = []
+                    for u in updates_plan:
+                        try:
+                            payload = {c: u["fila_nueva"].get(c) for c in CAMPOS_UPDATE
+                                       if c in u["fila_nueva"]}
+                            actualizar_reserva(u["id"], payload)
+                            aplicados += 1
+                        except Exception as ex:
+                            errores_upd.append(f"{u['nro_reserva']}: {ex}")
+                    if aplicados:
+                        st.success(f"✅ {aplicados} reserva(s) actualizada(s).")
+                        st.rerun()
+                    for err in errores_upd:
+                        st.error(f"Error al actualizar: {err}")
 
             # ── Vista previa editable ─────────────────────────────────
             if not nuevas.empty:
