@@ -560,7 +560,7 @@ if seccion == "📊 Reservas":
     st.markdown(f"### 📋 Listado de reservas ({total})  <span style='font-size:0.8rem;color:#888;font-weight:400'>— doble clic en cualquier celda para editar</span>", unsafe_allow_html=True)
 
     if not df_filtrado.empty:
-        COLS_EDIT = ["fuente","nombre","dormitorios","entrada","salida",
+        COLS_EDIT = ["fuente","nombre","apartamento","entrada","salida",
                      "noches","personas","precio","pago_cta","fecha_ingreso",
                      "resto_pdte","estado_pago","mes","comentarios"]
         cols_exist = [c for c in COLS_EDIT if c in df_filtrado.columns]
@@ -576,7 +576,7 @@ if seccion == "📊 Reservas":
             column_config={
                 "fuente":       st.column_config.SelectboxColumn("Fuente", options=FUENTES, width=130),
                 "nombre":       st.column_config.TextColumn("Nombre", width=200),
-                "dormitorios":  st.column_config.SelectboxColumn("Dorm.", options=DORMS, width=80),
+                "apartamento":  st.column_config.SelectboxColumn("Apartamento", options=[""] + APTOS, width=180),
                 "entrada":      st.column_config.TextColumn("Entrada", width=100),
                 "salida":       st.column_config.TextColumn("Salida", width=100),
                 "noches":       st.column_config.NumberColumn("Noches", width=75),
