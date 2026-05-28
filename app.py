@@ -1269,8 +1269,8 @@ elif seccion == "📅 Plantilla mensual":
 
         # Fondo azul claro uniforme para TODAS las barras de reservas.
         # El color por reserva ya no es el fondo sino el TEXTO del nombre.
-        BAR_BG       = "#D0E8F7"   # azul claro (mismo tono que las filas separadoras)
-        BAR_BORDER   = "#7FB3D9"   # azul un poco más oscuro para el contorno
+        BAR_BG       = "#A8CCEB"   # azul medio-claro
+        BAR_BORDER   = "#5F9BC4"   # azul más oscuro para el contorno
 
         def _color_reserva(rid=0):
             """Color del TEXTO del nombre del cliente, único por reserva."""
