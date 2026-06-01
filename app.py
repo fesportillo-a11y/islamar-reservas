@@ -548,11 +548,33 @@ def cargar_reservas() -> pd.DataFrame:
         return df
     return pd.DataFrame()
 
+# Campos "opcionales": columnas que pueden no existir aún en la BD
+# (introducidas en migraciones posteriores). Si la inserción/actualización
+# falla porque la BD aún no tiene la columna, se reintenta sin esos campos.
+_CAMPOS_OPCIONALES_BD = ("adultos", "ninos")
+
+def _payload_sin_opcionales(datos: dict) -> dict:
+    return {k: v for k, v in datos.items() if k not in _CAMPOS_OPCIONALES_BD}
+
 def guardar_reserva(datos: dict):
-    supabase.table("reservas").insert(datos).execute()
+    try:
+        supabase.table("reservas").insert(datos).execute()
+    except Exception as ex:
+        msg = str(ex).lower()
+        if any(c in msg for c in _CAMPOS_OPCIONALES_BD) or "column" in msg or "pgrst204" in msg:
+            supabase.table("reservas").insert(_payload_sin_opcionales(datos)).execute()
+        else:
+            raise
 
 def actualizar_reserva(id_reserva: int, datos: dict):
-    supabase.table("reservas").update(datos).eq("id", id_reserva).execute()
+    try:
+        supabase.table("reservas").update(datos).eq("id", id_reserva).execute()
+    except Exception as ex:
+        msg = str(ex).lower()
+        if any(c in msg for c in _CAMPOS_OPCIONALES_BD) or "column" in msg or "pgrst204" in msg:
+            supabase.table("reservas").update(_payload_sin_opcionales(datos)).eq("id", id_reserva).execute()
+        else:
+            raise
 
 def eliminar_reserva(id_reserva: int):
     supabase.table("reservas").delete().eq("id", id_reserva).execute()
@@ -2081,7 +2103,9 @@ elif seccion == "📥 Importar Booking":
                 "salida":        ["Salida"],
                 "fecha_reserva": ["Fecha de reserva", "Booking date", "Reservation date"],
                 "noches":        ["Duración (noches)", "Duracion (noches)"],
-                "personas":      ["Personas", "Adultos"],
+                "personas":      ["Personas"],
+                "adultos":       ["Adultos", "Adults"],
+                "ninos":         ["Niños", "Ninos", "Children"],
                 "habitaciones":  ["Habitaciones", "Rooms", "Unidades", "Nº de habitaciones",
                                   "Numero de habitaciones", "Número de habitaciones"],
                 "precio":        ["Precio"],
@@ -2238,6 +2262,17 @@ elif seccion == "📥 Importar Booking":
                     personas_total = int(float(personas_raw)) if personas_raw not in ("", "nan") else 0
                 except Exception:
                     personas_total = 0
+                # Adultos y niños (desglose de personas)
+                def _int_safe(raw):
+                    raw = str(raw).replace(".0", "").strip()
+                    if not raw or raw.lower() == "nan":
+                        return 0
+                    try:
+                        return int(float(raw))
+                    except Exception:
+                        return 0
+                adultos_total = _int_safe(g("adultos"))
+                ninos_total   = _int_safe(g("ninos"))
 
                 base = {
                     "nro_reserva": nro,
@@ -2281,6 +2316,8 @@ elif seccion == "📥 Importar Booking":
                     if es_primera:
                         precio_fila   = format_eur(precio_total) if precio_total is not None else ""
                         personas_fila = str(personas_total) if personas_total else ""
+                        adultos_fila  = adultos_total
+                        ninos_fila    = ninos_total
                         if pagado:
                             pago_cta_fila   = format_eur(precio_total) if precio_total is not None else ""
                             resto_pdte_fila = "0,00 €"
@@ -2292,6 +2329,8 @@ elif seccion == "📥 Importar Booking":
                     else:
                         precio_fila     = "0,00 €"
                         personas_fila   = "0"
+                        adultos_fila    = 0
+                        ninos_fila      = 0
                         pago_cta_fila   = "0,00 €" if pagado else ""
                         resto_pdte_fila = "0,00 €" if pagado else ""
                         fecha_ing_fila  = fecha_reserva if pagado else ""
@@ -2303,6 +2342,8 @@ elif seccion == "📥 Importar Booking":
                             "dormitorios":   tipo_dorm_i,
                             "precio":        precio_fila,
                             "personas":      personas_fila,
+                            "adultos":       adultos_fila,
+                            "ninos":         ninos_fila,
                             "pago_cta":      pago_cta_fila,
                             "resto_pdte":    resto_pdte_fila,
                             "fecha_ingreso": fecha_ing_fila}
@@ -2649,7 +2690,7 @@ elif seccion == "📋 Listado Raquel":
     if df_base.empty:
         st.info("No hay reservas que mostrar con los filtros actuales.")
     else:
-        # Helpers locales
+        # ── Helpers locales ────────────────────────────────────
         def _dorm_label_raquel(row) -> str:
             d = str(row.get("dormitorios", "")).strip().lower()
             if d == "1":       return "1 DORM"
@@ -2661,13 +2702,10 @@ elif seccion == "📋 Listado Raquel":
             if "1 DORM"  in apto: return "1 DORM"
             return "?"
 
-        def _personas_total_raquel(grupo) -> int:
-            """Total de personas del grupo. En multi-apto la primera fila
-            lleva el total, las demás 0; con MAX cubrimos también el caso
-            antiguo donde todas las filas replican el total."""
+        def _max_int(grupo, campo) -> int:
             mx = 0
             for _, r in grupo.iterrows():
-                s = str(r.get("personas", "") or "").replace(",", ".").strip()
+                s = str(r.get(campo, "") or "").replace(",", ".").strip()
                 if not s or s.lower() == "nan":
                     continue
                 try:
@@ -2676,6 +2714,23 @@ elif seccion == "📋 Listado Raquel":
                     pass
             return mx
 
+        def _propietario_grupo(grupo) -> str:
+            """Si algún apartamento del grupo pertenece a JUANMA → 'JUANMA'.
+            Si todos son propios → 'ESTEASUR'. Si no hay asignación → '—'."""
+            aptos = [str(r.get("apartamento", "") or "").strip() for _, r in grupo.iterrows()]
+            aptos = [a for a in aptos if a]
+            if not aptos:
+                return "—"
+            if any(a in APTOS_JUANMA for a in aptos):
+                return "JUANMA"
+            return "ESTEASUR"
+
+        def _personas_str(adultos: int, ninos: int, total: int) -> str:
+            """'5 (3 ad + 2 niños)' o '5' si no hay desglose."""
+            if adultos == 0 and ninos == 0:
+                return str(total) if total else ""
+            return f"{total} ({adultos} ad + {ninos} niños)"
+
         # Agrupar por nº de reserva base (quitar sufijo "-N" de multi-apto)
         df_r = df_base.copy()
         df_r["_nro_base"] = (
@@ -2683,8 +2738,10 @@ elif seccion == "📋 Listado Raquel":
         )
 
         filas_raquel = []
+        nro_bases    = []                      # para mapear filas → reservas en BD
+        peticiones_orig = []                   # texto traducido inicial (para detectar cambios)
         with st.spinner("Preparando listado y traduciendo comentarios al español…"):
-            for _, grupo in df_r.groupby("_nro_base", sort=False):
+            for nro_base, grupo in df_r.groupby("_nro_base", sort=False):
                 primera = grupo.iloc[0]
                 n_aptos = len(grupo)
                 tipos   = [_dorm_label_raquel(r) for _, r in grupo.iterrows()]
@@ -2692,45 +2749,101 @@ elif seccion == "📋 Listado Raquel":
                     f"{n_aptos} apto{'s' if n_aptos > 1 else ''} · "
                     f"{' + '.join(tipos)}"
                 )
+                personas_total = _max_int(grupo, "personas")
+                adultos_total  = _max_int(grupo, "adultos")
+                ninos_total    = _max_int(grupo, "ninos")
                 peticiones_raw = primera.get("comentarios", "") or ""
                 peticiones_es  = traducir_a_espanol(peticiones_raw)
+
                 filas_raquel.append({
+                    "Propietario": _propietario_grupo(grupo),
                     "Fuente":      primera.get("fuente", "") or "",
                     "Cliente":     primera.get("nombre", "") or "",
                     "Apartamento": apto_str,
                     "Entrada":     primera.get("entrada", "") or "",
                     "Salida":      primera.get("salida", "") or "",
-                    "Personas":    _personas_total_raquel(grupo),
+                    "Personas":    _personas_str(adultos_total, ninos_total, personas_total),
                     "Peticiones":  peticiones_es,
                 })
+                nro_bases.append(nro_base)
+                peticiones_orig.append(peticiones_es)
 
         df_raquel = pd.DataFrame(filas_raquel)
 
         st.markdown(f"**{len(df_raquel)} reserva(s)**")
-        st.dataframe(
+        st.caption(
+            "✏️ La columna **Peticiones** es editable: doble clic en cualquier celda "
+            "para añadir o cambiar notas para Raquel. Luego pulsa **Guardar peticiones**."
+        )
+
+        edited_raquel = st.data_editor(
             df_raquel,
             use_container_width=True,
             hide_index=True,
             height=min(80 + 35 * len(df_raquel), 700),
+            disabled=["Propietario", "Fuente", "Cliente", "Apartamento",
+                      "Entrada", "Salida", "Personas"],
             column_config={
-                "Fuente":      st.column_config.TextColumn(width=130),
-                "Cliente":     st.column_config.TextColumn(width=220),
-                "Apartamento": st.column_config.TextColumn(width=230),
-                "Entrada":     st.column_config.TextColumn(width=100),
-                "Salida":      st.column_config.TextColumn(width=100),
-                "Personas":    st.column_config.NumberColumn(width=85),
-                "Peticiones":  st.column_config.TextColumn(width=350),
+                "Propietario": st.column_config.TextColumn(width=110),
+                "Fuente":      st.column_config.TextColumn(width=120),
+                "Cliente":     st.column_config.TextColumn(width=200),
+                "Apartamento": st.column_config.TextColumn(width=210),
+                "Entrada":     st.column_config.TextColumn(width=95),
+                "Salida":      st.column_config.TextColumn(width=95),
+                "Personas":    st.column_config.TextColumn(width=160),
+                "Peticiones":  st.column_config.TextColumn(
+                    "Peticiones ✏️", width=380,
+                ),
             },
+            num_rows="fixed",
+            key="raquel_editor",
         )
 
-        csv_bytes = df_raquel.to_csv(index=False, sep=";").encode("utf-8-sig")
-        st.download_button(
-            "⬇️ Descargar listado (CSV para Excel)",
-            data=csv_bytes,
-            file_name=f"Listado_Raquel_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
+        col_save, col_dl = st.columns([1, 1])
+        with col_save:
+            if st.button("💾 Guardar peticiones",
+                         type="primary", use_container_width=True,
+                         key="raquel_save"):
+                cambios = 0
+                errores = []
+                for i in range(len(edited_raquel)):
+                    nuevo = str(edited_raquel.iloc[i]["Peticiones"] or "")
+                    antiguo = str(peticiones_orig[i] or "")
+                    if nuevo == antiguo:
+                        continue
+                    nro_base = nro_bases[i]
+                    # Localizar TODAS las filas (multi-apto) que comparten ese nº base
+                    bases = df_base["nro_reserva"].astype(str).str.replace(
+                        r"-\d+$", "", regex=True
+                    )
+                    reservas_grupo = df_base[bases == nro_base]
+                    for _, r in reservas_grupo.iterrows():
+                        try:
+                            actualizar_reserva(int(r["id"]), {"comentarios": nuevo})
+                            cambios += 1
+                        except Exception as ex:
+                            errores.append(f"{r.get('nro_reserva','?')}: {ex}")
+                if errores:
+                    for e in errores:
+                        st.error(f"Error al guardar: {e}")
+                if cambios:
+                    st.success(f"✅ Guardadas {cambios} actualización(es).")
+                    # Limpiamos la caché de traducción para que los textos guardados
+                    # sustituyan a los traducidos en la próxima vista.
+                    traducir_a_espanol.clear()
+                    st.rerun()
+                else:
+                    st.info("No hay cambios que guardar.")
+
+        with col_dl:
+            csv_bytes = edited_raquel.to_csv(index=False, sep=";").encode("utf-8-sig")
+            st.download_button(
+                "⬇️ Descargar listado (CSV para Excel)",
+                data=csv_bytes,
+                file_name=f"Listado_Raquel_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
 
 # ─────────────────────────────────────────────
 # SECCIÓN: USUARIOS (solo admins)

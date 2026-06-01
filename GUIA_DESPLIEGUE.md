@@ -225,6 +225,36 @@ credenciales por mensaje.
 
 ---
 
+## PASO 7 · Habilitar el desglose Adultos / Niños (opcional)
+
+El Listado Raquel muestra el número total de personas alojadas. Si quieres ver
+**también** el desglose de adultos y niños (ej. `5 (3 ad + 2 niños)`), hay que
+añadir dos columnas a la tabla `reservas`. **Es opcional**: sin esto, el listado
+seguirá mostrando solo el total.
+
+### 7.1 Crear las columnas
+
+1. En Supabase → **SQL Editor → New query**.
+2. Pega esto y pulsa **Run**:
+
+```sql
+ALTER TABLE reservas ADD COLUMN IF NOT EXISTS adultos INTEGER;
+ALTER TABLE reservas ADD COLUMN IF NOT EXISTS ninos   INTEGER;
+NOTIFY pgrst, 'reload schema';
+```
+
+Verás "Success. No rows returned".
+
+### 7.2 Reimportar las reservas de Booking
+
+Las reservas que importes a partir de ahora ya guardarán el desglose. Para que
+las **ya existentes** muestren el desglose, vuelve a importar el Excel de
+Booking más reciente: el importador detectará las que ya están y solo
+actualizará los campos que vienen del Excel (sin tocar lo que has editado a
+mano), aplicando ahora también `adultos` y `ninos`.
+
+---
+
 ## ✅ Resultado final
 
 - La app funciona en cualquier navegador, móvil u ordenador.
