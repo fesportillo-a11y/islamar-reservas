@@ -110,7 +110,7 @@ def format_eur(v) -> str:
     return f"{f:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " €"
 
 def generar_pdf_plantilla(grid, aptos, n_dias, mes_str, anio,
-                          primer_dia, juanma_set=None) -> bytes:
+                          primer_dia, juanma_set=None, salida_map=None) -> bytes:
     """Genera el calendario mensual (Plantilla mensual) como PDF A4 apaisado,
     con el mismo aspecto que la vista HTML: barras azul claro, nombre del
     cliente en color por reserva, fines de semana sombreados, fila separadora
@@ -160,6 +160,12 @@ def generar_pdf_plantilla(grid, aptos, n_dias, mes_str, anio,
         fontName="Helvetica-Bold", fontSize=6, leading=7,
         alignment=TA_CENTER,
     )
+    split_style = ParagraphStyle(
+        "SplitCal",
+        fontName="Helvetica-Bold", fontSize=5, leading=6,
+        alignment=TA_CENTER,
+    )
+    salida_map = salida_map or {}
 
     # ── Fila cabecera con dias y dia de la semana ──
     header_row = [f"{mes_str.title()} {anio}"]
@@ -232,15 +238,59 @@ def generar_pdf_plantilla(grid, aptos, n_dias, mes_str, anio,
         # Recorrer dias y unir consecutivos con la misma reserva
         d = 1
         while d <= n_dias:
-            c = grid.get(apto, {}).get(d)
+            c     = grid.get(apto, {}).get(d)
+            c_out = salida_map.get((apto, d))
+
+            # ── (1) Casilla dividida: misma fecha = salida de X + entrada de Y ──
+            if c and c_out and c.get("id") != c_out.get("id"):
+                nombre_out = str(c_out.get("nombre", ""))[:30]
+                nombre_in  = str(c.get("nombre", ""))[:30]
+                col_out = _color_reserva(c_out["id"])
+                col_in  = _color_reserva(c["id"])
+                combined = (
+                    f'<font color="{col_out}"><b>◀ {_xml_escape(nombre_out)}</b></font>'
+                    f'<br/>'
+                    f'<font color="{col_in}"><b>▶ {_xml_escape(nombre_in)}</b></font>'
+                )
+                data[row_idx][d] = Paragraph(combined, split_style)
+                style_cmds.append((
+                    "BACKGROUND", (d, row_idx), (d, row_idx),
+                    _rl_colors.HexColor(BAR_BG),
+                ))
+                d += 1
+                continue
+
+            # ── (2) Solo salida ese día (sin entrada nueva) ──
+            if c_out and not c:
+                nombre_out = str(c_out.get("nombre", ""))[:30]
+                col_out = _color_reserva(c_out["id"])
+                solo_out = (
+                    f'<font color="{col_out}"><b>◀ {_xml_escape(nombre_out)}</b></font>'
+                )
+                data[row_idx][d] = Paragraph(solo_out, name_style)
+                style_cmds.append((
+                    "BACKGROUND", (d, row_idx), (d, row_idx),
+                    _rl_colors.HexColor(BAR_BG),
+                ))
+                d += 1
+                continue
+
+            # ── (3) Día libre ──
             if c is None:
                 d += 1
                 continue
+
+            # ── (4) Estancia normal: agrupar días consecutivos de la misma reserva ──
             curr_id = c["id"]
             span_end = d
             while span_end < n_dias:
                 nc = grid[apto].get(span_end + 1)
                 if nc is None or nc.get("id") != curr_id:
+                    break
+                # Si el día siguiente es una salida + entrada (split), corta el span
+                # para que la celda dividida se renderice aparte.
+                nc_out = salida_map.get((apto, span_end + 1))
+                if nc_out and nc_out.get("id") != curr_id:
                     break
                 span_end += 1
             # Nombre del cliente (acortado para que quepa). Importante:
@@ -253,12 +303,10 @@ def generar_pdf_plantilla(grid, aptos, n_dias, mes_str, anio,
                 f'<font color="{txt_col}"><b>{_xml_escape(nombre)}</b></font>'
             )
             data[row_idx][d] = Paragraph(nombre_html, name_style)
-            # Span de celdas
             if span_end > d:
                 style_cmds.append((
                     "SPAN", (d, row_idx), (span_end, row_idx),
                 ))
-            # Fondo azul claro
             style_cmds.append((
                 "BACKGROUND", (d, row_idx), (span_end, row_idx),
                 _rl_colors.HexColor(BAR_BG),
@@ -2228,6 +2276,7 @@ elif seccion == "📅 Plantilla mensual":
                 anio=anio_sel,
                 primer_dia=primer_dia,
                 juanma_set=APTOS_JUANMA,
+                salida_map=salida_map,
             )
             st.download_button(
                 "📄 Descargar calendario en PDF (imprimir)",
