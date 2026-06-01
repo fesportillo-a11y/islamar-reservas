@@ -109,6 +109,199 @@ def format_eur(v) -> str:
         return ""
     return f"{f:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " €"
 
+def generar_pdf_plantilla(grid, aptos, n_dias, mes_str, anio,
+                          primer_dia, juanma_set=None) -> bytes:
+    """Genera el calendario mensual (Plantilla mensual) como PDF A4 apaisado,
+    con el mismo aspecto que la vista HTML: barras azul claro, nombre del
+    cliente en color por reserva, fines de semana sombreados, fila separadora
+    para JUANMA. Devuelve los bytes del PDF."""
+    if not _PDF_OK:
+        return b""
+
+    PALETA = [
+        "#1F4E79", "#C0622A", "#2E8B6E", "#7B3FA0", "#B5452A",
+        "#1A7A6E", "#A0522D", "#1B3A6B", "#7A5C00", "#5B3A8A",
+        "#2B7A4B", "#8B3A62", "#2C4E70", "#6B5C2E",
+    ]
+    BAR_BG     = "#A8CCEB"
+    HEADER_BG  = "#1F4E79"
+    APTO_BG    = "#2C5F8A"
+    WEEKEND_BG = "#ECEFF1"
+    SEP_BG     = "#BDD7EE"
+    DIAS_SEM   = ["L", "M", "X", "J", "V", "S", "D"]
+
+    def _color_reserva(rid):
+        return PALETA[int(rid) % len(PALETA)]
+
+    juanma_set = juanma_set or set()
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=landscape(A4),
+        leftMargin=8 * mm, rightMargin=8 * mm,
+        topMargin=10 * mm, bottomMargin=12 * mm,
+        title=f"Calendario {mes_str} {anio}",
+        author="ESTEASUR 2015 · ISLAMAR",
+    )
+
+    titulo_style = ParagraphStyle(
+        "TituloCal",
+        fontName="Helvetica-Bold", fontSize=14,
+        alignment=TA_CENTER, textColor=_rl_colors.HexColor("#1F4E79"),
+        spaceAfter=4,
+    )
+    subt_style = ParagraphStyle(
+        "SubCal",
+        fontName="Helvetica", fontSize=8, alignment=TA_CENTER,
+        textColor=_rl_colors.grey, spaceAfter=8,
+    )
+    name_style = ParagraphStyle(
+        "NameCal",
+        fontName="Helvetica-Bold", fontSize=6, leading=7,
+        alignment=TA_CENTER,
+    )
+
+    # ── Fila cabecera con dias y dia de la semana ──
+    header_row = [f"{mes_str.title()} {anio}"]
+    for d in range(1, n_dias + 1):
+        wd = (primer_dia + d - 1) % 7
+        header_row.append(f"{d}\n{DIAS_SEM[wd]}")
+
+    data = [header_row]
+    style_cmds = [
+        # Cabecera
+        ("BACKGROUND", (0, 0), (-1, 0), _rl_colors.HexColor(HEADER_BG)),
+        ("TEXTCOLOR",  (0, 0), (-1, 0), _rl_colors.white),
+        ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE",   (0, 0), (-1, 0), 7),
+        ("ALIGN",      (0, 0), (-1, 0), "CENTER"),
+        ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
+        # Bordes finos por toda la tabla
+        ("GRID",       (0, 0), (-1, -1), 0.25, _rl_colors.HexColor("#CCCCCC")),
+        ("LEFTPADDING",(0, 0), (-1, -1), 1),
+        ("RIGHTPADDING",(0, 0), (-1, -1), 1),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING",(0, 0), (-1, -1), 2),
+    ]
+
+    # Sombrear columnas de fin de semana
+    for d in range(1, n_dias + 1):
+        wd = (primer_dia + d - 1) % 7
+        if wd >= 5:
+            style_cmds.append((
+                "BACKGROUND", (d, 1), (d, -1),
+                _rl_colors.HexColor(WEEKEND_BG),
+            ))
+
+    # ── Filas por apartamento (con separador JUANMA si aplica) ──
+    row_idx = 0
+    for apto in aptos:
+        if juanma_set and apto in juanma_set and not any(
+            data[i][0] == "▸ JUANMA" for i in range(len(data))
+        ):
+            # Fila separadora antes del primer apto de Juanma
+            sep_row = ["▸ JUANMA"] + [""] * n_dias
+            data.append(sep_row)
+            row_idx += 1
+            sep_n = row_idx
+            style_cmds.append(("SPAN",       (0, sep_n), (-1, sep_n)))
+            style_cmds.append(("BACKGROUND", (0, sep_n), (-1, sep_n),
+                               _rl_colors.HexColor(SEP_BG)))
+            style_cmds.append(("TEXTCOLOR",  (0, sep_n), (-1, sep_n),
+                               _rl_colors.HexColor("#1F4E79")))
+            style_cmds.append(("FONTNAME",   (0, sep_n), (-1, sep_n),
+                               "Helvetica-Bold"))
+            style_cmds.append(("ALIGN",      (0, sep_n), (-1, sep_n), "LEFT"))
+            style_cmds.append(("FONTSIZE",   (0, sep_n), (-1, sep_n), 7))
+
+        # Fila del apartamento
+        row = [apto] + [""] * n_dias
+        data.append(row)
+        row_idx += 1
+
+        # Estilo de la celda del nombre del apartamento
+        style_cmds.append(("BACKGROUND", (0, row_idx), (0, row_idx),
+                           _rl_colors.HexColor(APTO_BG)))
+        style_cmds.append(("TEXTCOLOR",  (0, row_idx), (0, row_idx),
+                           _rl_colors.white))
+        style_cmds.append(("FONTNAME",   (0, row_idx), (0, row_idx),
+                           "Helvetica-Bold"))
+        style_cmds.append(("FONTSIZE",   (0, row_idx), (0, row_idx), 6))
+        style_cmds.append(("ALIGN",      (0, row_idx), (0, row_idx), "LEFT"))
+
+        # Recorrer dias y unir consecutivos con la misma reserva
+        d = 1
+        while d <= n_dias:
+            c = grid.get(apto, {}).get(d)
+            if c is None:
+                d += 1
+                continue
+            curr_id = c["id"]
+            span_end = d
+            while span_end < n_dias:
+                nc = grid[apto].get(span_end + 1)
+                if nc is None or nc.get("id") != curr_id:
+                    break
+                span_end += 1
+            # Nombre del cliente (acortado para que quepa)
+            nombre = str(c.get("nombre", ""))[:40]
+            data[row_idx][d] = Paragraph(_xml_escape(nombre), name_style)
+            # Span de celdas
+            if span_end > d:
+                style_cmds.append((
+                    "SPAN", (d, row_idx), (span_end, row_idx),
+                ))
+            # Fondo azul claro
+            style_cmds.append((
+                "BACKGROUND", (d, row_idx), (span_end, row_idx),
+                _rl_colors.HexColor(BAR_BG),
+            ))
+            # Texto en color por reserva (sobre el Paragraph ya aplicado,
+            # forzamos color a nivel de celda para que se vea)
+            txt_col = _color_reserva(curr_id)
+            style_cmds.append((
+                "TEXTCOLOR", (d, row_idx), (span_end, row_idx),
+                _rl_colors.HexColor(txt_col),
+            ))
+            d = span_end + 1
+
+    # ── Anchos de columna ──
+    # Apto: 26mm. Días: reparten el resto.
+    PAGE_W_USABLE = landscape(A4)[0] - 16 * mm   # margenes 8+8
+    APTO_W = 26 * mm
+    day_w  = (PAGE_W_USABLE - APTO_W) / n_dias
+    col_widths = [APTO_W] + [day_w] * n_dias
+
+    table = Table(data, colWidths=col_widths, repeatRows=1)
+    table.setStyle(TableStyle(style_cmds))
+
+    # ── Encabezado del documento ──
+    story = [
+        Paragraph(f"Calendario · {mes_str.title()} {anio} · ESTEASUR 2015 · ISLAMAR",
+                  titulo_style),
+        Paragraph(
+            f"Generado {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+            subt_style,
+        ),
+        table,
+    ]
+
+    def _pie(canvas, doc_):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColor(_rl_colors.grey)
+        w_pag, _ = landscape(A4)
+        canvas.drawCentredString(
+            w_pag / 2.0, 7 * mm,
+            f"Calendario {mes_str} {anio} · ESTEASUR 2015 · ISLAMAR · "
+            f"Página {doc_.page}",
+        )
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_pie, onLaterPages=_pie)
+    return buf.getvalue()
+
+
 def generar_pdf_raquel(df, f_desde=None, f_hasta=None) -> bytes:
     """Genera el Listado Raquel como PDF A4 apaisado, listo para imprimir.
     Cabeceras se repiten en cada página. Devuelve los bytes del PDF."""
@@ -2024,6 +2217,26 @@ elif seccion == "📅 Plantilla mensual":
         </div>
         """, unsafe_allow_html=True)
         st.markdown(html, unsafe_allow_html=True)
+
+        # ── Descargar el calendario como PDF ──
+        if _PDF_OK:
+            pdf_cal_bytes = generar_pdf_plantilla(
+                grid=grid,
+                aptos=APTOS,
+                n_dias=n_dias,
+                mes_str=mes_sel,
+                anio=anio_sel,
+                primer_dia=primer_dia,
+                juanma_set=APTOS_JUANMA,
+            )
+            st.download_button(
+                "📄 Descargar calendario en PDF (imprimir)",
+                data=pdf_cal_bytes,
+                file_name=f"Calendario_{mes_sel}_{anio_sel}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                key="cal_pdf_download",
+            )
 
         # ── Panel consultar / editar individual ──
         st.divider()
