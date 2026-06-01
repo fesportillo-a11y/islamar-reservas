@@ -38,7 +38,8 @@ st.set_page_config(
     page_title="ESTEASUR 2015 - ISLAMAR",
     page_icon="🏖️",
     layout="wide",
-    initial_sidebar_state="expanded",
+    # "auto" → en móvil arranca plegado, en escritorio arranca desplegado.
+    initial_sidebar_state="auto",
 )
 
 MESES = ["ENERO","FEBRERO","MARZO","ABRIL","MAYO","JUNIO",
@@ -806,6 +807,20 @@ def exportar_excel(df: pd.DataFrame) -> bytes:
 # ─────────────────────────────────────────────
 # ESTILOS CSS
 # ─────────────────────────────────────────────
+# Meta tags para comportamiento tipo app en móvil (PWA básico):
+# - Theme color: tinta del navegador en Android al estilo de la app.
+# - apple-mobile-web-app-capable: en iOS se abre a pantalla completa cuando
+#   se añade al inicio.
+# - viewport-fit=cover: usa la zona del notch/cámara también.
+st.markdown("""
+<meta name="theme-color" content="#0f2f52">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ISLAMAR">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+""", unsafe_allow_html=True)
+
 st.markdown("""
 <style>
 /* ── Fondo general ── */
@@ -988,6 +1003,83 @@ st.markdown("""
 .stDataFrame { border-radius: 10px; overflow: hidden; }
 h1 { color: #1F4E79 !important; }
 h2, h3 { color: #2C5F8A !important; }
+
+/* ══════════════════════════════════════
+   MOVIL — adaptaciones especificas
+══════════════════════════════════════ */
+@media (max-width: 768px) {
+    /* Menos padding alrededor del contenido principal */
+    .main .block-container,
+    [data-testid="stMainBlockContainer"] {
+        padding: 1rem 0.6rem 2rem !important;
+        max-width: 100% !important;
+    }
+
+    /* Titulos un poco mas pequenos para que respiren */
+    h1 { font-size: 1.4rem !important; }
+    h2 { font-size: 1.15rem !important; }
+    h3 { font-size: 1.05rem !important; }
+
+    /* Metricas en grid 2x2 en lugar de 4x1 */
+    .metric-card { padding: 8px 6px !important; }
+    .metric-num  { font-size: 1.4rem !important; }
+    .metric-lab  { font-size: 0.7rem !important; }
+
+    /* Botones y selectores con mas altura para tocar bien con el dedo */
+    .stButton > button,
+    .stDownloadButton > button,
+    .stForm button {
+        min-height: 44px !important;
+        font-size: 0.95rem !important;
+    }
+    [data-baseweb="select"] > div { min-height: 42px !important; }
+    [data-baseweb="input"]        { min-height: 42px !important; }
+
+    /* Inputs: que iOS no haga auto-zoom (necesita font-size >= 16px) */
+    input, textarea, select { font-size: 16px !important; }
+
+    /* Tablas (st.dataframe / st.data_editor) — scroll horizontal limpio */
+    .stDataFrame,
+    [data-testid="stDataFrame"],
+    [data-testid="stTable"],
+    [data-testid="stDataFrameResizable"] {
+        overflow-x: auto !important;
+        max-width: 100% !important;
+    }
+
+    /* Sidebar: cuando se abre en movil, ocupa mas pantalla */
+    section[data-testid="stSidebar"] {
+        width: 86vw !important;
+        min-width: 86vw !important;
+    }
+
+    /* Logo del sidebar mas compacto */
+    .sb-logo-title { font-size: 1rem !important; letter-spacing: 2px !important; }
+    .sb-logo-sub   { font-size: 0.6rem !important; }
+
+    /* Imagen del calendario mensual: que se pueda hacer scroll lateral */
+    .cal-wrap { -webkit-overflow-scrolling: touch; }
+
+    /* Hero de login: ajustar tamanos para portrait */
+    .islamar-hero { padding: 50px 16px 6px !important; }
+    .islamar-hero h1   { font-size: 2.2rem !important; letter-spacing: 2px !important; }
+    .islamar-hero .dash{ font-size: 1.6rem !important; letter-spacing: 4px !important; }
+    .islamar-hero p    { font-size: 0.95rem !important; }
+
+    /* Formulario de login mas ancho en pantallas pequenas */
+    [data-testid="stForm"] {
+        max-width: 92vw !important;
+        margin: 18px auto 50px !important;
+        padding: 22px 18px !important;
+    }
+}
+
+/* Ajustes adicionales para pantallas muy pequenas (iPhone SE etc.) */
+@media (max-width: 380px) {
+    .islamar-hero h1   { font-size: 1.9rem !important; }
+    .islamar-hero .dash{ font-size: 1.4rem !important; }
+    .main .block-container { padding: 0.8rem 0.4rem 1.6rem !important; }
+}
 </style>
 """, unsafe_allow_html=True)
 

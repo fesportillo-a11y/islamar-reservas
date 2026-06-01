@@ -255,9 +255,52 @@ mano), aplicando ahora también `adultos` y `ninos`.
 
 ---
 
+## PASO 8 · Instalar la app en el móvil (como si fuera nativa)
+
+La app está adaptada a móvil. Si la usas desde el navegador de tu teléfono, ya
+se ve bien (sidebar plegada por defecto, botones grandes, tablas con scroll
+lateral, etc.). Pero puedes ir un paso más: **instalarla como icono en la
+pantalla de inicio del móvil**, igual que una app de la AppStore o Play Store.
+Es gratis y no hace falta instalar nada raro.
+
+### iPhone / iPad (Safari)
+
+1. Abre la URL de tu app en **Safari** (no en Chrome — solo Safari permite
+   instalar apps web en iOS).
+2. Pulsa el icono de **Compartir** (un cuadrado con una flecha hacia arriba)
+   en la barra inferior.
+3. Desliza hacia abajo en el menú hasta **"Añadir a pantalla de inicio"**.
+4. Te aparece una vista previa con el nombre **"ISLAMAR"**. Pulsa **"Añadir"**.
+
+Listo: en tu pantalla de inicio aparecerá un icono nuevo. Cuando lo pulses,
+la app se abre **a pantalla completa, sin barra de Safari**, como cualquier
+otra app.
+
+### Android (Chrome / Edge / Samsung Internet)
+
+1. Abre la URL de tu app en **Chrome** (o el navegador que uses).
+2. Pulsa el menú de tres puntos arriba a la derecha **⋮**.
+3. Elige **"Instalar aplicación"** o **"Añadir a la pantalla principal"**.
+4. Confirma. El icono aparece en el lanzador de apps.
+
+Al pulsarlo se abre fullscreen, igual que en iOS.
+
+### Cosas a saber
+
+- **No es una "app nativa"** propiamente dicha, es una web disfrazada de app
+  (lo llaman "PWA"). Para el día a día se comporta exactamente como una app
+  normal.
+- Para entrar siempre tienes que **iniciar sesión** con tu usuario y
+  contraseña. La cookie de sesión dura 30 días por defecto.
+- Si quieres cambiar el **nombre que aparece bajo el icono**, edítalo en la
+  pantalla de "Añadir a inicio" antes de confirmar.
+
+---
+
 ## ✅ Resultado final
 
 - La app funciona en cualquier navegador, móvil u ordenador.
+- Se puede **instalar en el móvil** como si fuera una app.
 - Solo entran los usuarios registrados en los Secrets.
 - Los datos se guardan automáticamente en Supabase.
 - Cualquier cambio que haga uno del equipo lo ven todos al instante.
