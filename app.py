@@ -776,6 +776,32 @@ st.markdown("""
     margin: 6px 0 !important;
 }
 
+/* Boton del sidebar (Cerrar sesion) — visible sobre el fondo azul oscuro */
+[data-testid="stSidebar"] .stButton > button,
+[data-testid="stSidebar"] button[kind="secondary"] {
+    width: 100% !important;
+    background: rgba(255,255,255,0.08) !important;
+    color: rgba(255,255,255,0.95) !important;
+    border: 1px solid rgba(255,255,255,0.25) !important;
+    border-radius: 8px !important;
+    padding: 8px 10px !important;
+    font-weight: 600 !important;
+    font-size: 0.88rem !important;
+    transition: background 0.15s ease, border-color 0.15s ease !important;
+    margin: 6px 0 10px !important;
+}
+[data-testid="stSidebar"] .stButton > button:hover,
+[data-testid="stSidebar"] button[kind="secondary"]:hover {
+    background: rgba(244, 67, 54, 0.85) !important;   /* rojo discreto en hover */
+    border-color: rgba(255,255,255,0.35) !important;
+    color: white !important;
+}
+[data-testid="stSidebar"] .stButton > button p,
+[data-testid="stSidebar"] button[kind="secondary"] p {
+    color: inherit !important;
+    margin: 0 !important;
+}
+
 /* Pie del sidebar */
 .sb-footer {
     margin-top: 20px;
