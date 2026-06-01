@@ -17,6 +17,20 @@ try:
 except Exception:
     _TRANSLATOR_OK = False
 
+try:
+    from reportlab.lib import colors as _rl_colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER
+    from reportlab.platypus import (
+        SimpleDocTemplate, Table, TableStyle, Paragraph
+    )
+    from xml.sax.saxutils import escape as _xml_escape
+    _PDF_OK = True
+except Exception:
+    _PDF_OK = False
+
 # ─────────────────────────────────────────────
 # CONFIGURACIÓN
 # ─────────────────────────────────────────────
@@ -93,6 +107,130 @@ def format_eur(v) -> str:
     if f is None:
         return ""
     return f"{f:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " €"
+
+def generar_pdf_raquel(df, f_desde=None, f_hasta=None) -> bytes:
+    """Genera el Listado Raquel como PDF A4 apaisado, listo para imprimir.
+    Cabeceras se repiten en cada página. Devuelve los bytes del PDF."""
+    if not _PDF_OK:
+        return b""
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=landscape(A4),
+        leftMargin=12 * mm, rightMargin=12 * mm,
+        topMargin=14 * mm, bottomMargin=14 * mm,
+        title="Listado Raquel",
+        author="ESTEASUR 2015 · ISLAMAR",
+    )
+
+    titulo_style = ParagraphStyle(
+        "TituloRaquel",
+        fontName="Helvetica-Bold", fontSize=15,
+        alignment=TA_CENTER,
+        textColor=_rl_colors.HexColor("#1F4E79"),
+        spaceAfter=4,
+    )
+    subtitulo_style = ParagraphStyle(
+        "SubRaquel",
+        fontName="Helvetica", fontSize=9,
+        alignment=TA_CENTER, textColor=_rl_colors.grey,
+        spaceAfter=10,
+    )
+    celda_style = ParagraphStyle(
+        "Celda",
+        fontName="Helvetica", fontSize=8, leading=10,
+        alignment=TA_LEFT,
+    )
+    celda_center = ParagraphStyle(
+        "CeldaC",
+        fontName="Helvetica", fontSize=8, leading=10,
+        alignment=TA_CENTER,
+    )
+
+    def _p(txt, centro=False):
+        s = _xml_escape(str(txt) if txt is not None else "")
+        return Paragraph(s, celda_center if centro else celda_style)
+
+    # ── Cabecera del documento ────────────────────────
+    story = [Paragraph("Listado Raquel · ESTEASUR 2015 · ISLAMAR", titulo_style)]
+    subt = []
+    if f_desde and f_hasta:
+        subt.append(
+            f"Estancias entre {f_desde.strftime('%d/%m/%Y')} y "
+            f"{f_hasta.strftime('%d/%m/%Y')}"
+        )
+    subt.append(f"{len(df)} reserva(s)")
+    subt.append(f"Generado {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+    story.append(Paragraph(" · ".join(subt), subtitulo_style))
+
+    # ── Tabla ─────────────────────────────────────────
+    cabeceras = [
+        "Propietario", "Fuente", "Cliente", "Apartamento",
+        "Entrada", "Salida", "Personas", "Peticiones",
+    ]
+    data = [cabeceras]
+    for _, r in df.iterrows():
+        data.append([
+            _p(r.get("Propietario", ""), centro=True),
+            _p(r.get("Fuente", ""),      centro=True),
+            _p(r.get("Cliente", "")),
+            _p(r.get("Apartamento", "")),
+            _p(r.get("Entrada", ""), centro=True),
+            _p(r.get("Salida", ""),  centro=True),
+            _p(r.get("Personas", "")),
+            _p(r.get("Peticiones", "")),
+        ])
+
+    # Anchos por columna (suma ~273 mm = ancho útil A4 apaisado - margenes)
+    col_widths = [
+        22 * mm,   # Propietario
+        25 * mm,   # Fuente
+        45 * mm,   # Cliente
+        45 * mm,   # Apartamento
+        18 * mm,   # Entrada
+        18 * mm,   # Salida
+        30 * mm,   # Personas
+        70 * mm,   # Peticiones
+    ]
+
+    tabla = Table(data, colWidths=col_widths, repeatRows=1)
+    tabla.setStyle(TableStyle([
+        # Cabecera
+        ("BACKGROUND", (0, 0), (-1, 0), _rl_colors.HexColor("#1F4E79")),
+        ("TEXTCOLOR",  (0, 0), (-1, 0), _rl_colors.white),
+        ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE",   (0, 0), (-1, 0), 9),
+        ("ALIGN",      (0, 0), (-1, 0), "CENTER"),
+        ("VALIGN",     (0, 0), (-1, 0), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, 0), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+        # Cuerpo
+        ("VALIGN",     (0, 1), (-1, -1), "TOP"),
+        ("GRID",       (0, 0), (-1, -1), 0.4, _rl_colors.HexColor("#BBBBBB")),
+        ("TOPPADDING", (0, 1), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
+        ("LEFTPADDING",  (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        # Cebra
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+         [_rl_colors.white, _rl_colors.HexColor("#F4F8FB")]),
+    ]))
+    story.append(tabla)
+
+    def _pie(canvas, doc_):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColor(_rl_colors.grey)
+        ancho_pag, _alto = landscape(A4)
+        canvas.drawCentredString(
+            ancho_pag / 2.0, 8 * mm,
+            f"Listado Raquel · ESTEASUR 2015 · ISLAMAR · Página {doc_.page}",
+        )
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_pie, onLaterPages=_pie)
+    return buf.getvalue()
 
 @st.cache_data(show_spinner=False, max_entries=2000)
 def traducir_a_espanol(texto: str) -> str:
@@ -2799,7 +2937,7 @@ elif seccion == "📋 Listado Raquel":
             key="raquel_editor",
         )
 
-        col_save, col_dl = st.columns([1, 1])
+        col_save, col_dl_csv, col_dl_pdf = st.columns([1, 1, 1])
         with col_save:
             if st.button("💾 Guardar peticiones",
                          type="primary", use_container_width=True,
@@ -2835,15 +2973,31 @@ elif seccion == "📋 Listado Raquel":
                 else:
                     st.info("No hay cambios que guardar.")
 
-        with col_dl:
+        with col_dl_csv:
             csv_bytes = edited_raquel.to_csv(index=False, sep=";").encode("utf-8-sig")
             st.download_button(
-                "⬇️ Descargar listado (CSV para Excel)",
+                "⬇️ CSV (Excel)",
                 data=csv_bytes,
                 file_name=f"Listado_Raquel_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
                 mime="text/csv",
                 use_container_width=True,
             )
+        with col_dl_pdf:
+            if _PDF_OK:
+                pdf_bytes = generar_pdf_raquel(
+                    edited_raquel,
+                    f_desde=f_desde if aplicar_fechas else None,
+                    f_hasta=f_hasta if aplicar_fechas else None,
+                )
+                st.download_button(
+                    "📄 PDF (imprimir)",
+                    data=pdf_bytes,
+                    file_name=f"Listado_Raquel_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+            else:
+                st.caption("PDF no disponible (reportlab no instalado)")
 
 # ─────────────────────────────────────────────
 # SECCIÓN: USUARIOS (solo admins)
