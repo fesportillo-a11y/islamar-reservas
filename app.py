@@ -243,9 +243,16 @@ def generar_pdf_plantilla(grid, aptos, n_dias, mes_str, anio,
                 if nc is None or nc.get("id") != curr_id:
                     break
                 span_end += 1
-            # Nombre del cliente (acortado para que quepa)
+            # Nombre del cliente (acortado para que quepa). Importante:
+            # cuando se usa un Paragraph dentro de una celda, el TEXTCOLOR de
+            # la tabla NO se aplica; hay que meter el color con <font> dentro
+            # del propio Paragraph para que se respete.
             nombre = str(c.get("nombre", ""))[:40]
-            data[row_idx][d] = Paragraph(_xml_escape(nombre), name_style)
+            txt_col = _color_reserva(curr_id)
+            nombre_html = (
+                f'<font color="{txt_col}"><b>{_xml_escape(nombre)}</b></font>'
+            )
+            data[row_idx][d] = Paragraph(nombre_html, name_style)
             # Span de celdas
             if span_end > d:
                 style_cmds.append((
@@ -255,13 +262,6 @@ def generar_pdf_plantilla(grid, aptos, n_dias, mes_str, anio,
             style_cmds.append((
                 "BACKGROUND", (d, row_idx), (span_end, row_idx),
                 _rl_colors.HexColor(BAR_BG),
-            ))
-            # Texto en color por reserva (sobre el Paragraph ya aplicado,
-            # forzamos color a nivel de celda para que se vea)
-            txt_col = _color_reserva(curr_id)
-            style_cmds.append((
-                "TEXTCOLOR", (d, row_idx), (span_end, row_idx),
-                _rl_colors.HexColor(txt_col),
             ))
             d = span_end + 1
 
