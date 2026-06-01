@@ -1202,6 +1202,15 @@ if seccion == "📊 Reservas":
         id_map = df_filtrado["id"].reset_index(drop=True)
         df_show = df_filtrado[cols_exist].copy().reset_index(drop=True)
 
+        # Traducir comentarios al español de cara al usuario.
+        # Usa la caché de traducir_a_espanol: la primera vez gasta una llamada
+        # HTTP por comentario único, después es instantáneo.
+        if "comentarios" in df_show.columns:
+            with st.spinner("Traduciendo comentarios al español…"):
+                df_show["comentarios"] = (
+                    df_show["comentarios"].fillna("").astype(str).apply(traducir_a_espanol)
+                )
+
         edited = st.data_editor(
             df_show,
             use_container_width=True,
