@@ -624,6 +624,7 @@ with st.sidebar:
     st.markdown('<span class="sb-label">Navegación</span>', unsafe_allow_html=True)
     _secciones_nav = [
         "📊 Reservas",
+        "📋 Listado Raquel",
         "💰 Resumen de ventas",
         "📅 Plantilla mensual",
         "📥 Importar Booking",
@@ -2348,6 +2349,102 @@ elif seccion == "📥 Importar Booking":
 
         except Exception as e:
             st.error(f"Error al procesar el archivo: {e}")
+
+# ─────────────────────────────────────────────
+# SECCIÓN: LISTADO RAQUEL
+# ─────────────────────────────────────────────
+# Vista resumida: una línea por reserva (las multi-apartamento se agrupan),
+# con fuente, cliente, tipo y nº de aptos, fechas, personas y peticiones.
+elif seccion == "📋 Listado Raquel":
+    st.markdown("### 📋 Listado Raquel")
+    st.caption(
+        "Vista resumida: fuente, cliente, apartamento (cuántos y de qué tipo), "
+        "fechas, personas alojadas y peticiones. Las reservas multi-apartamento "
+        "aparecen en una sola línea."
+    )
+
+    if df_filtrado.empty:
+        st.info("No hay reservas que mostrar con los filtros actuales.")
+    else:
+        # Helpers locales
+        def _dorm_label_raquel(row) -> str:
+            d = str(row.get("dormitorios", "")).strip().lower()
+            if d == "1":       return "1 DORM"
+            if d == "2":       return "2 DORM"
+            if d == "estudio": return "Estudio"
+            apto = str(row.get("apartamento", "") or "").upper()
+            if "ESTUDIO" in apto: return "Estudio"
+            if "2 DORM"  in apto: return "2 DORM"
+            if "1 DORM"  in apto: return "1 DORM"
+            return "?"
+
+        def _personas_total_raquel(grupo) -> int:
+            """Total de personas del grupo. En multi-apto la primera fila
+            lleva el total, las demás 0; con MAX cubrimos también el caso
+            antiguo donde todas las filas replican el total."""
+            mx = 0
+            for _, r in grupo.iterrows():
+                s = str(r.get("personas", "") or "").replace(",", ".").strip()
+                if not s or s.lower() == "nan":
+                    continue
+                try:
+                    mx = max(mx, int(float(s)))
+                except Exception:
+                    pass
+            return mx
+
+        # Agrupar por nº de reserva base (quitar sufijo "-N" de multi-apto)
+        df_r = df_filtrado.copy()
+        df_r["_nro_base"] = (
+            df_r["nro_reserva"].astype(str).str.replace(r"-\d+$", "", regex=True)
+        )
+
+        filas_raquel = []
+        for _, grupo in df_r.groupby("_nro_base", sort=False):
+            primera = grupo.iloc[0]
+            n_aptos = len(grupo)
+            tipos   = [_dorm_label_raquel(r) for _, r in grupo.iterrows()]
+            apto_str = (
+                f"{n_aptos} apto{'s' if n_aptos > 1 else ''} · "
+                f"{' + '.join(tipos)}"
+            )
+            filas_raquel.append({
+                "Fuente":      primera.get("fuente", "") or "",
+                "Cliente":     primera.get("nombre", "") or "",
+                "Apartamento": apto_str,
+                "Entrada":     primera.get("entrada", "") or "",
+                "Salida":      primera.get("salida", "") or "",
+                "Personas":    _personas_total_raquel(grupo),
+                "Peticiones":  primera.get("comentarios", "") or "",
+            })
+
+        df_raquel = pd.DataFrame(filas_raquel)
+
+        st.markdown(f"**{len(df_raquel)} reserva(s)**")
+        st.dataframe(
+            df_raquel,
+            use_container_width=True,
+            hide_index=True,
+            height=min(80 + 35 * len(df_raquel), 700),
+            column_config={
+                "Fuente":      st.column_config.TextColumn(width=130),
+                "Cliente":     st.column_config.TextColumn(width=220),
+                "Apartamento": st.column_config.TextColumn(width=230),
+                "Entrada":     st.column_config.TextColumn(width=100),
+                "Salida":      st.column_config.TextColumn(width=100),
+                "Personas":    st.column_config.NumberColumn(width=85),
+                "Peticiones":  st.column_config.TextColumn(width=350),
+            },
+        )
+
+        csv_bytes = df_raquel.to_csv(index=False, sep=";").encode("utf-8-sig")
+        st.download_button(
+            "⬇️ Descargar listado (CSV para Excel)",
+            data=csv_bytes,
+            file_name=f"Listado_Raquel_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
 
 # ─────────────────────────────────────────────
 # SECCIÓN: USUARIOS (solo admins)
