@@ -397,90 +397,99 @@ header[data-testid="stHeader"]    { background: transparent !important; box-shad
     text-shadow: 0 2px 12px rgba(0,0,0,0.5);
 }
 
-/* — Formulario de login: cristal centrado — */
+/* — Formulario de login (panel solido oscuro, sin blur para evitar lag) — */
 [data-testid="stForm"] {
     max-width: 440px;
     margin: 28px auto 70px !important;
-    background: rgba(255,255,255,0.08) !important;
-    -webkit-backdrop-filter: blur(14px);
-    backdrop-filter: blur(14px);
-    border: 1px solid rgba(255,255,255,0.18) !important;
-    border-radius: 16px !important;
-    padding: 30px 28px !important;
-    box-shadow: 0 10px 36px rgba(0,0,0,0.35) !important;
+    background: rgba(13, 27, 48, 0.92) !important;
+    border: 1px solid rgba(255,255,255,0.14) !important;
+    border-radius: 14px !important;
+    padding: 28px 26px !important;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.45) !important;
 }
 [data-testid="stForm"] h2,
 [data-testid="stForm"] h3 {
     color: white !important;
     text-align: center;
     margin: 0 0 18px !important;
-    font-size: 1.25rem !important;
+    font-size: 1.22rem !important;
     font-weight: 600 !important;
     letter-spacing: 0.5px;
 }
 [data-testid="stForm"] label,
-[data-testid="stForm"] label p {
+[data-testid="stForm"] label p,
+[data-testid="stForm"] label span {
     color: rgba(255,255,255,0.92) !important;
     font-weight: 500 !important;
     font-size: 0.92rem !important;
 }
-/* Contenedor del input (lo que se ve "fondo gris oscuro") */
+/* Contenedor del input (fondo solido azul-grisaceo oscuro) */
 [data-testid="stForm"] [data-baseweb="input"],
-[data-testid="stForm"] [data-baseweb="base-input"] {
-    background: rgba(0,0,0,0.38) !important;
-    border: 1px solid rgba(255,255,255,0.28) !important;
+[data-testid="stForm"] [data-baseweb="base-input"],
+[data-testid="stForm"] [data-baseweb="input"] > div,
+[data-testid="stForm"] [data-baseweb="base-input"] > div {
+    background: #1f3147 !important;
+    border-color: rgba(255,255,255,0.22) !important;
     border-radius: 8px !important;
 }
-/* El <input> real: texto y cursor BIEN visibles sobre el fondo oscuro */
+/* El <input> real: texto blanco, cursor visible */
 [data-testid="stForm"] input,
 [data-testid="stForm"] input[type="text"],
 [data-testid="stForm"] input[type="password"] {
     background: transparent !important;
     color: #ffffff !important;
-    -webkit-text-fill-color: #ffffff !important;  /* sobreescribe autofill */
-    caret-color: #ffffff !important;              /* cursor blanco */
+    -webkit-text-fill-color: #ffffff !important;
+    caret-color: #ffffff !important;
     font-size: 1rem !important;
 }
 [data-testid="stForm"] input::placeholder {
-    color: rgba(255,255,255,0.55) !important;
+    color: rgba(255,255,255,0.5) !important;
     opacity: 1 !important;
 }
 [data-testid="stForm"] [data-baseweb="input"]:focus-within,
 [data-testid="stForm"] [data-baseweb="base-input"]:focus-within {
-    border-color: #2196F3 !important;
-    box-shadow: 0 0 0 2px rgba(33,150,243,0.35) !important;
+    border-color: #4FC3F7 !important;
+    box-shadow: 0 0 0 2px rgba(79,195,247,0.28) !important;
 }
-/* Quita el fondo amarillento del autofill de Chrome/Edge */
+/* Autofill (Chrome/Edge): mantener fondo oscuro y texto blanco */
 [data-testid="stForm"] input:-webkit-autofill,
 [data-testid="stForm"] input:-webkit-autofill:hover,
 [data-testid="stForm"] input:-webkit-autofill:focus {
-    -webkit-box-shadow: 0 0 0 1000px rgba(0,0,0,0.4) inset !important;
+    -webkit-box-shadow: 0 0 0 1000px #1f3147 inset !important;
     -webkit-text-fill-color: #ffffff !important;
     caret-color: #ffffff !important;
 }
-/* Iconito del ojito para mostrar/ocultar contraseña, visible sobre el fondo */
+/* Boton del "ojo" para mostrar contrasena: transparente y discreto */
 [data-testid="stForm"] [data-baseweb="input"] button,
 [data-testid="stForm"] [data-baseweb="base-input"] button {
-    color: rgba(255,255,255,0.75) !important;
+    background: transparent !important;
+    border: none !important;
+    color: rgba(255,255,255,0.7) !important;
+    box-shadow: none !important;
 }
-[data-testid="stForm"] button {
+[data-testid="stForm"] [data-baseweb="input"] button:hover,
+[data-testid="stForm"] [data-baseweb="base-input"] button:hover {
+    background: rgba(255,255,255,0.06) !important;
+    color: white !important;
+}
+/* Boton submit (Entrar) — azul plano, sin gradient ni transforms */
+[data-testid="stForm"] [data-testid="stFormSubmitButton"] button,
+[data-testid="stForm"] [kind="primaryFormSubmit"],
+[data-testid="stForm"] [kind="secondaryFormSubmit"] {
     width: 100% !important;
-    background: linear-gradient(135deg, #1976D2 0%, #2196F3 100%) !important;
+    background: #1976D2 !important;
     color: white !important;
     font-weight: 700 !important;
     border: none !important;
-    border-radius: 10px !important;
-    padding: 12px 0 !important;
+    border-radius: 8px !important;
+    padding: 11px 0 !important;
     font-size: 1rem !important;
     letter-spacing: 0.5px !important;
-    box-shadow: 0 4px 14px rgba(33,150,243,0.4) !important;
     margin-top: 6px !important;
-    transition: transform 0.15s ease, box-shadow 0.15s ease !important;
+    box-shadow: 0 3px 10px rgba(25,118,210,0.35) !important;
 }
-[data-testid="stForm"] button:hover {
-    background: linear-gradient(135deg, #1565C0 0%, #1E88E5 100%) !important;
-    box-shadow: 0 6px 20px rgba(33,150,243,0.5) !important;
-    transform: translateY(-1px);
+[data-testid="stForm"] [data-testid="stFormSubmitButton"] button:hover {
+    background: #1565C0 !important;
 }
 
 /* — Pie discreto — */
