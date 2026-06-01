@@ -399,18 +399,44 @@ header[data-testid="stHeader"]    { background: transparent !important; box-shad
     font-weight: 500 !important;
     font-size: 0.92rem !important;
 }
-[data-testid="stForm"] input,
-[data-testid="stForm"] [data-baseweb="input"] > div {
-    background: rgba(255,255,255,0.12) !important;
-    color: white !important;
-    border: 1px solid rgba(255,255,255,0.22) !important;
+/* Contenedor del input (lo que se ve "fondo gris oscuro") */
+[data-testid="stForm"] [data-baseweb="input"],
+[data-testid="stForm"] [data-baseweb="base-input"] {
+    background: rgba(0,0,0,0.38) !important;
+    border: 1px solid rgba(255,255,255,0.28) !important;
     border-radius: 8px !important;
 }
-[data-testid="stForm"] input::placeholder { color: rgba(255,255,255,0.55) !important; }
-[data-testid="stForm"] input:focus,
-[data-testid="stForm"] [data-baseweb="input"]:focus-within > div {
+/* El <input> real: texto y cursor BIEN visibles sobre el fondo oscuro */
+[data-testid="stForm"] input,
+[data-testid="stForm"] input[type="text"],
+[data-testid="stForm"] input[type="password"] {
+    background: transparent !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;  /* sobreescribe autofill */
+    caret-color: #ffffff !important;              /* cursor blanco */
+    font-size: 1rem !important;
+}
+[data-testid="stForm"] input::placeholder {
+    color: rgba(255,255,255,0.55) !important;
+    opacity: 1 !important;
+}
+[data-testid="stForm"] [data-baseweb="input"]:focus-within,
+[data-testid="stForm"] [data-baseweb="base-input"]:focus-within {
     border-color: #2196F3 !important;
     box-shadow: 0 0 0 2px rgba(33,150,243,0.35) !important;
+}
+/* Quita el fondo amarillento del autofill de Chrome/Edge */
+[data-testid="stForm"] input:-webkit-autofill,
+[data-testid="stForm"] input:-webkit-autofill:hover,
+[data-testid="stForm"] input:-webkit-autofill:focus {
+    -webkit-box-shadow: 0 0 0 1000px rgba(0,0,0,0.4) inset !important;
+    -webkit-text-fill-color: #ffffff !important;
+    caret-color: #ffffff !important;
+}
+/* Iconito del ojito para mostrar/ocultar contraseña, visible sobre el fondo */
+[data-testid="stForm"] [data-baseweb="input"] button,
+[data-testid="stForm"] [data-baseweb="base-input"] button {
+    color: rgba(255,255,255,0.75) !important;
 }
 [data-testid="stForm"] button {
     width: 100% !important;
