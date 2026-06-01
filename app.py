@@ -293,6 +293,10 @@ def _build_authenticator():
 
 authenticator, BOOTSTRAP_ADMINS = _build_authenticator()
 
+# Reservamos un hueco ARRIBA del formulario de login para poder pintar la
+# portada solo cuando el usuario aún no está autenticado.
+hero_slot = st.empty()
+
 # Renderiza el formulario de login en el área principal
 try:
     authenticator.login(
@@ -310,11 +314,153 @@ except Exception as ex:
 
 auth_status = st.session_state.get("authentication_status")
 
+# ── PORTADA HERO solo si NO está autenticado ─────────────────────────
+# El CSS oculta el sidebar y la cabecera de Streamlit en la pantalla de
+# login, pinta una imagen de fondo con velo oscuro y centra el formulario
+# con efecto cristal. Una vez logueado, este hueco queda vacío y los
+# estilos no se aplican (Streamlit los descarta entre reruns).
+if auth_status is not True:
+    with hero_slot.container():
+        st.markdown(
+            """
+<style>
+/* — Oculta el sidebar y vuelve transparente la cabecera mientras dura el login — */
+section[data-testid="stSidebar"] { display: none !important; }
+header[data-testid="stHeader"]    { background: transparent !important; box-shadow: none !important; }
+[data-testid="collapsedControl"]  { display: none !important; }
+
+/* — Imagen de fondo + velo oscuro en todo el viewport — */
+[data-testid="stAppViewContainer"] {
+    background:
+        linear-gradient(180deg, rgba(5,18,35,0.72) 0%, rgba(5,18,35,0.92) 100%),
+        url('https://images.unsplash.com/photo-1545324418-cc1a3fa10c00?w=1920&q=80&fit=crop')
+        center/cover no-repeat fixed !important;
+    min-height: 100vh !important;
+}
+
+/* — Tipografía del hero — */
+.islamar-hero {
+    text-align: center;
+    padding: 70px 20px 10px;
+    color: white;
+}
+.islamar-hero h1 {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: clamp(2.4rem, 6vw, 4.4rem);
+    font-weight: 800;
+    letter-spacing: 3px;
+    color: white !important;
+    margin: 0;
+    line-height: 1.05;
+    text-shadow: 0 4px 24px rgba(0,0,0,0.55);
+}
+.islamar-hero .dash {
+    font-size: clamp(2rem, 5vw, 3.6rem);
+    font-weight: 700;
+    letter-spacing: 6px;
+    margin: 6px 0 22px;
+    color: white !important;
+    text-shadow: 0 4px 24px rgba(0,0,0,0.55);
+}
+.islamar-hero p {
+    font-size: clamp(0.95rem, 1.6vw, 1.18rem);
+    color: rgba(255,255,255,0.88);
+    font-weight: 400;
+    max-width: 620px;
+    margin: 0 auto 12px;
+    line-height: 1.55;
+    text-shadow: 0 2px 12px rgba(0,0,0,0.5);
+}
+
+/* — Formulario de login: cristal centrado — */
+[data-testid="stForm"] {
+    max-width: 440px;
+    margin: 28px auto 70px !important;
+    background: rgba(255,255,255,0.08) !important;
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+    border: 1px solid rgba(255,255,255,0.18) !important;
+    border-radius: 16px !important;
+    padding: 30px 28px !important;
+    box-shadow: 0 10px 36px rgba(0,0,0,0.35) !important;
+}
+[data-testid="stForm"] h2,
+[data-testid="stForm"] h3 {
+    color: white !important;
+    text-align: center;
+    margin: 0 0 18px !important;
+    font-size: 1.25rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.5px;
+}
+[data-testid="stForm"] label,
+[data-testid="stForm"] label p {
+    color: rgba(255,255,255,0.92) !important;
+    font-weight: 500 !important;
+    font-size: 0.92rem !important;
+}
+[data-testid="stForm"] input,
+[data-testid="stForm"] [data-baseweb="input"] > div {
+    background: rgba(255,255,255,0.12) !important;
+    color: white !important;
+    border: 1px solid rgba(255,255,255,0.22) !important;
+    border-radius: 8px !important;
+}
+[data-testid="stForm"] input::placeholder { color: rgba(255,255,255,0.55) !important; }
+[data-testid="stForm"] input:focus,
+[data-testid="stForm"] [data-baseweb="input"]:focus-within > div {
+    border-color: #2196F3 !important;
+    box-shadow: 0 0 0 2px rgba(33,150,243,0.35) !important;
+}
+[data-testid="stForm"] button {
+    width: 100% !important;
+    background: linear-gradient(135deg, #1976D2 0%, #2196F3 100%) !important;
+    color: white !important;
+    font-weight: 700 !important;
+    border: none !important;
+    border-radius: 10px !important;
+    padding: 12px 0 !important;
+    font-size: 1rem !important;
+    letter-spacing: 0.5px !important;
+    box-shadow: 0 4px 14px rgba(33,150,243,0.4) !important;
+    margin-top: 6px !important;
+    transition: transform 0.15s ease, box-shadow 0.15s ease !important;
+}
+[data-testid="stForm"] button:hover {
+    background: linear-gradient(135deg, #1565C0 0%, #1E88E5 100%) !important;
+    box-shadow: 0 6px 20px rgba(33,150,243,0.5) !important;
+    transform: translateY(-1px);
+}
+
+/* — Pie discreto — */
+.islamar-foot {
+    text-align: center;
+    color: rgba(255,255,255,0.45);
+    font-size: 0.75rem;
+    letter-spacing: 1px;
+    margin: 20px 0 60px;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.4);
+}
+</style>
+
+<div class="islamar-hero">
+    <h1>ESTEASUR 2015</h1>
+    <div class="dash">— ISLAMAR —</div>
+    <p>Sistema profesional de gestión de reservas<br>diseñado para la eficiencia y la claridad</p>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
+
 if auth_status is False:
     st.error("Usuario o contraseña incorrectos.")
     st.stop()
 elif auth_status is None:
-    st.info("🔒 Esta aplicación es privada. Introduce tus credenciales para entrar.")
+    # El hero ya da el contexto visual; no añadimos más mensajería.
+    st.markdown(
+        '<div class="islamar-foot">ESTEASUR 2015 · ISLAMAR · Acceso privado</div>',
+        unsafe_allow_html=True,
+    )
     st.stop()
 
 # A partir de aquí, el usuario está autenticado.
