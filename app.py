@@ -2363,7 +2363,57 @@ elif seccion == "📋 Listado Raquel":
         "aparecen en una sola línea."
     )
 
-    if df_filtrado.empty:
+    # ── Filtro por fechas ──────────────────────────────
+    today = date.today()
+    fin_anio = date(today.year, 12, 31)
+    col_f1, col_f2 = st.columns([3, 1])
+    with col_f1:
+        rango = st.date_input(
+            "Rango de fechas (muestra reservas cuya estancia se solape con este rango)",
+            value=(today, fin_anio),
+            format="DD/MM/YYYY",
+            key="raquel_rango",
+        )
+    with col_f2:
+        st.write("")
+        st.write("")
+        aplicar_fechas = st.checkbox(
+            "Aplicar filtro de fechas",
+            value=True,
+            key="raquel_aplicar_fechas",
+        )
+
+    # Normalizar el resultado del date_input (puede venir como tupla o fecha suelta)
+    if isinstance(rango, tuple):
+        if len(rango) == 2:
+            f_desde, f_hasta = rango
+        elif len(rango) == 1:
+            f_desde = f_hasta = rango[0]
+        else:
+            f_desde = f_hasta = today
+    else:
+        f_desde = f_hasta = rango
+
+    # Si el usuario ha invertido el rango por error, lo arreglamos solos
+    if f_desde and f_hasta and f_desde > f_hasta:
+        f_desde, f_hasta = f_hasta, f_desde
+
+    # Aplicar el filtro de fechas (solape de estancia con el rango)
+    df_base = df_filtrado
+    if aplicar_fechas and f_desde and f_hasta:
+        def _solapa_rango(row):
+            e = parse_date_safe(row.get("entrada", ""))
+            s = parse_date_safe(row.get("salida", ""))
+            if not e or not s:
+                return False
+            return e <= f_hasta and s >= f_desde
+        df_base = df_filtrado[df_filtrado.apply(_solapa_rango, axis=1)]
+        st.caption(
+            f"🗓️ Mostrando reservas que cubren algún día entre "
+            f"**{f_desde.strftime('%d/%m/%Y')}** y **{f_hasta.strftime('%d/%m/%Y')}**."
+        )
+
+    if df_base.empty:
         st.info("No hay reservas que mostrar con los filtros actuales.")
     else:
         # Helpers locales
@@ -2394,7 +2444,7 @@ elif seccion == "📋 Listado Raquel":
             return mx
 
         # Agrupar por nº de reserva base (quitar sufijo "-N" de multi-apto)
-        df_r = df_filtrado.copy()
+        df_r = df_base.copy()
         df_r["_nro_base"] = (
             df_r["nro_reserva"].astype(str).str.replace(r"-\d+$", "", regex=True)
         )
