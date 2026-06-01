@@ -828,8 +828,9 @@ with st.sidebar:
         "➕ Nueva reserva",
         "✏️ Editar reserva",
     ]
-    if IS_ADMIN:
-        _secciones_nav.append("👥 Usuarios")
+    # NOTA: la pantalla "👥 Usuarios" está desactivada (queda como código muerto
+    # en el bloque elif del mismo nombre). Los usuarios se gestionan únicamente
+    # desde Streamlit Cloud → Misterios (ver GUIA_DESPLIEGUE.md, PASO 5).
     seccion = st.radio("nav", _secciones_nav, label_visibility="collapsed")
 
     # Filtros
