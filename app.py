@@ -11,6 +11,12 @@ import re
 import bcrypt
 import streamlit_authenticator as stauth
 
+try:
+    from deep_translator import GoogleTranslator
+    _TRANSLATOR_OK = True
+except Exception:
+    _TRANSLATOR_OK = False
+
 # ─────────────────────────────────────────────
 # CONFIGURACIÓN
 # ─────────────────────────────────────────────
@@ -87,6 +93,25 @@ def format_eur(v) -> str:
     if f is None:
         return ""
     return f"{f:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " €"
+
+@st.cache_data(show_spinner=False, max_entries=2000)
+def traducir_a_espanol(texto: str) -> str:
+    """Traduce un texto a español usando Google Translate (via deep-translator).
+    El resultado se cachea por texto exacto: la primera vez es lenta (~300 ms),
+    siguientes son instantáneas. Si falla la traducción o el texto ya parece
+    español, devuelve el texto original sin tocar."""
+    if not _TRANSLATOR_OK or not texto:
+        return texto or ""
+    t = str(texto).strip()
+    if len(t) < 4:
+        return t                              # muy corto, no merece la pena
+    if any(c in t for c in "ñ¿¡"):
+        return t                              # claramente español
+    try:
+        out = GoogleTranslator(source="auto", target="es").translate(t)
+        return out or t
+    except Exception:
+        return t                              # fallo de red → original
 
 def es_cancelada(estado_str: str) -> bool:
     """True si el estado indica que la reserva está cancelada o es un no-show."""
@@ -2622,23 +2647,26 @@ elif seccion == "📋 Listado Raquel":
         )
 
         filas_raquel = []
-        for _, grupo in df_r.groupby("_nro_base", sort=False):
-            primera = grupo.iloc[0]
-            n_aptos = len(grupo)
-            tipos   = [_dorm_label_raquel(r) for _, r in grupo.iterrows()]
-            apto_str = (
-                f"{n_aptos} apto{'s' if n_aptos > 1 else ''} · "
-                f"{' + '.join(tipos)}"
-            )
-            filas_raquel.append({
-                "Fuente":      primera.get("fuente", "") or "",
-                "Cliente":     primera.get("nombre", "") or "",
-                "Apartamento": apto_str,
-                "Entrada":     primera.get("entrada", "") or "",
-                "Salida":      primera.get("salida", "") or "",
-                "Personas":    _personas_total_raquel(grupo),
-                "Peticiones":  primera.get("comentarios", "") or "",
-            })
+        with st.spinner("Preparando listado y traduciendo comentarios al español…"):
+            for _, grupo in df_r.groupby("_nro_base", sort=False):
+                primera = grupo.iloc[0]
+                n_aptos = len(grupo)
+                tipos   = [_dorm_label_raquel(r) for _, r in grupo.iterrows()]
+                apto_str = (
+                    f"{n_aptos} apto{'s' if n_aptos > 1 else ''} · "
+                    f"{' + '.join(tipos)}"
+                )
+                peticiones_raw = primera.get("comentarios", "") or ""
+                peticiones_es  = traducir_a_espanol(peticiones_raw)
+                filas_raquel.append({
+                    "Fuente":      primera.get("fuente", "") or "",
+                    "Cliente":     primera.get("nombre", "") or "",
+                    "Apartamento": apto_str,
+                    "Entrada":     primera.get("entrada", "") or "",
+                    "Salida":      primera.get("salida", "") or "",
+                    "Personas":    _personas_total_raquel(grupo),
+                    "Peticiones":  peticiones_es,
+                })
 
         df_raquel = pd.DataFrame(filas_raquel)
 
