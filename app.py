@@ -951,7 +951,18 @@ def _es_admin(username: str) -> bool:
             return True
     return False
 
-IS_ADMIN = _es_admin(USER_USERNAME)
+def _es_limpieza(username: str) -> bool:
+    """True si el usuario tiene rol='limpieza' en la BD.
+    Los usuarios con rol limpieza solo ven la pantalla "📋 Listado Raquel"."""
+    if username in BOOTSTRAP_ADMINS:
+        return False
+    for u in cargar_usuarios_bd():
+        if u["username"] == username and u.get("rol") == "limpieza" and u.get("activo", True):
+            return True
+    return False
+
+IS_ADMIN    = _es_admin(USER_USERNAME)
+IS_LIMPIEZA = _es_limpieza(USER_USERNAME)
 
 # ─────────────────────────────────────────────
 # FUNCIONES DE DATOS
@@ -1387,20 +1398,26 @@ with st.sidebar:
 
     # Navegación
     st.markdown('<span class="sb-label">Navegación</span>', unsafe_allow_html=True)
-    _secciones_nav = [
-        "📊 Reservas",
-        "📋 Listado Raquel",
-        "💰 Resumen de ventas",
-        "📅 Plantilla mensual",
-        "📥 Importar Booking",
-        "➕ Nueva reserva",
-        "✏️ Editar reserva",
-    ]
-    # Pantalla "👥 Usuarios": solo visible para admins (los de st.secrets["auth"]
-    # son admins automáticamente). Si la tabla `usuarios` aún no existe en
-    # Supabase, la pantalla mostrará la lista vacía pero no romperá nada.
-    if IS_ADMIN:
-        _secciones_nav.append("👥 Usuarios")
+    # Los usuarios con rol "limpieza" SOLO ven el Listado Raquel.
+    # Tipico para personal de limpieza que solo necesita saber quien entra,
+    # quien sale y las peticiones del cliente.
+    if IS_LIMPIEZA:
+        _secciones_nav = ["📋 Listado Raquel"]
+    else:
+        _secciones_nav = [
+            "📊 Reservas",
+            "📋 Listado Raquel",
+            "💰 Resumen de ventas",
+            "📅 Plantilla mensual",
+            "📥 Importar Booking",
+            "➕ Nueva reserva",
+            "✏️ Editar reserva",
+        ]
+        # Pantalla "👥 Usuarios": solo visible para admins. Si la tabla
+        # `usuarios` aún no existe en Supabase, la pantalla mostrará la
+        # lista vacía pero no romperá nada.
+        if IS_ADMIN:
+            _secciones_nav.append("👥 Usuarios")
     seccion = st.radio("nav", _secciones_nav, label_visibility="collapsed")
 
     # Filtros
@@ -3678,10 +3695,20 @@ elif seccion == "👥 Usuarios":
                         )
                     with col_b:
                         rol_actual = (u.get("rol") or "usuario")
+                        _ROLES = ["usuario", "admin", "limpieza"]
+                        try:
+                            _idx_rol = _ROLES.index(rol_actual)
+                        except ValueError:
+                            _idx_rol = 0
                         nuevo_rol = st.selectbox(
-                            "Rol", ["usuario", "admin"],
-                            index=0 if rol_actual == "usuario" else 1,
+                            "Rol", _ROLES,
+                            index=_idx_rol,
                             key=f"rol_{u['id']}",
+                            help=(
+                                "usuario: ve todo menos Usuarios. "
+                                "admin: gestiona usuarios. "
+                                "limpieza: solo ve Listado Raquel."
+                            ),
                         )
                         nuevo_activo = st.toggle(
                             "Activo", value=u.get("activo", True),
@@ -3820,8 +3847,12 @@ elif seccion == "👥 Usuarios":
                     "Email", placeholder="juana@ejemplo.com",
                 )
                 new_rol = st.selectbox(
-                    "Rol", ["usuario", "admin"],
-                    help="'admin' puede entrar a esta sección y gestionar usuarios.",
+                    "Rol", ["usuario", "admin", "limpieza"],
+                    help=(
+                        "usuario: ve todas las pantallas excepto Usuarios. "
+                        "admin: puede gestionar usuarios. "
+                        "limpieza: solo ve 'Listado Raquel'."
+                    ),
                 )
 
             col_p1, col_p2 = st.columns(2)
