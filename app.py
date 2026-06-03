@@ -48,6 +48,7 @@ MESES = ["ENERO","FEBRERO","MARZO","ABRIL","MAYO","JUNIO",
 FUENTES  = ["DIRECTA", "BOOKING.COM"]
 ESTADOS  = ["", "PAGADO", "PENDIENTE", "SEÑAL PAGADA", "Pago mediante Booking.com", "EFECTIVO", "RESERVA ANULADA"]
 DORMS    = ["1", "2", "3", "Estudio"]
+FORMAS_PAGO = ["", "Bankinter", "Santander", "La Caixa"]
 
 APTOS = [
     # ── Apartamentos propios ──────────────────
@@ -939,7 +940,7 @@ def cargar_reservas() -> pd.DataFrame:
 # Campos "opcionales": columnas que pueden no existir aún en la BD
 # (introducidas en migraciones posteriores). Si la inserción/actualización
 # falla porque la BD aún no tiene la columna, se reintenta sin esos campos.
-_CAMPOS_OPCIONALES_BD = ("adultos", "ninos")
+_CAMPOS_OPCIONALES_BD = ("adultos", "ninos", "forma_pago")
 
 def _payload_sin_opcionales(datos: dict) -> dict:
     return {k: v for k, v in datos.items() if k not in _CAMPOS_OPCIONALES_BD}
@@ -1597,6 +1598,10 @@ elif seccion == "➕ Nueva reserva":
             personas    = st.text_input("Nº personas")
             precio      = st.text_input("Precio (€)")
             estado_pago = st.selectbox("Estado de pago", ESTADOS)
+            forma_pago  = st.selectbox(
+                "Forma de pago", FORMAS_PAGO,
+                help="Banco donde se cobra el ingreso (si aplica).",
+            )
             pago_cta    = st.text_input("Pago a cuenta (€)")
             fecha_ing   = st.text_input("Fecha ingreso")
             resto_pdte  = st.text_input("Resto pendiente (€)")
@@ -1650,6 +1655,7 @@ elif seccion == "➕ Nueva reserva":
                 "fecha_ingreso": fecha_ing,
                 "resto_pdte":  resto_pdte,
                 "estado_pago": estado_pago,
+                "forma_pago":  forma_pago,
                 "comentarios": comentarios,
             }
             guardar_reserva(datos)
@@ -1706,6 +1712,12 @@ elif seccion == "✏️ Editar reserva":
             with c3:
                 pago_cta  = st.text_input("Pago a cuenta (€)", value=str(reserva.get("pago_cta","")))
                 fecha_ing = st.text_input("Fecha ingreso",     value=str(reserva.get("fecha_ingreso","")))
+                fp_val    = str(reserva.get("forma_pago", "") or "")
+                forma_pago = st.selectbox(
+                    "Forma de pago", FORMAS_PAGO,
+                    index=FORMAS_PAGO.index(fp_val) if fp_val in FORMAS_PAGO else 0,
+                    help="Banco donde se cobra el ingreso.",
+                )
             with c4:
                 resto_pdte = st.text_input("Resto pendiente (€)", value=str(reserva.get("resto_pdte","")))
 
@@ -1727,7 +1739,8 @@ elif seccion == "✏️ Editar reserva":
                 "dormitorios": dormitorios, "entrada": entrada_str, "salida": salida_str,
                 "noches": noches, "personas": personas, "precio": precio,
                 "pago_cta": pago_cta, "fecha_ingreso": fecha_ing, "resto_pdte": resto_pdte,
-                "estado_pago": estado_pago, "comentarios": comentarios,
+                "estado_pago": estado_pago, "forma_pago": forma_pago,
+                "comentarios": comentarios,
             }
             actualizar_reserva(id_sel, datos)
             st.success(f"✅ Reserva de **{nombre}** actualizada.")

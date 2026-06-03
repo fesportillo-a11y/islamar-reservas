@@ -255,6 +255,23 @@ mano), aplicando ahora también `adultos` y `ninos`.
 
 ---
 
+## PASO 7.1 · Habilitar el campo "Forma de pago" (opcional)
+
+En el formulario de **Nueva reserva** y **Editar reserva** hay un desplegable
+"Forma de pago" con opciones Bankinter / Santander / La Caixa. Para que el
+valor se guarde en la BD, añade la columna:
+
+```sql
+ALTER TABLE reservas ADD COLUMN IF NOT EXISTS forma_pago TEXT;
+NOTIFY pgrst, 'reload schema';
+```
+
+Si no haces este paso, el desplegable sigue apareciendo y se puede usar, pero
+el valor no se persistirá (la app detecta que la columna no existe y guarda el
+resto de campos sin error).
+
+---
+
 ## PASO 8 · Instalar la app en el móvil (como si fuera nativa)
 
 La app está adaptada a móvil. Si la usas desde el navegador de tu teléfono, ya
