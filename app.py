@@ -3073,9 +3073,12 @@ elif seccion == "📥 Importar Booking":
             if canceladas_en_bd:
                 df_cancel_bd = pd.DataFrame(canceladas_en_bd)
                 st.markdown("---")
-                st.error(
+                st.warning(
                     f"🚨 **{len(df_cancel_bd)} reserva(s)** ya guardadas en la aplicación "
-                    f"aparecen ahora como **CANCELADAS** en Booking.com. ¿Deseas eliminarlas?"
+                    f"aparecen ahora como **CANCELADAS** en Booking.com. "
+                    f"Lo recomendado es **marcarlas** como anuladas (se mantienen "
+                    f"en el listado de Raquel con la etiqueta 🚫 CANCELADA). "
+                    f"También puedes eliminarlas por completo si quieres limpiar la BD."
                 )
                 cols_c = [c for c in ["nro_reserva","nombre","apartamento","entrada","salida"]
                           if c in df_cancel_bd.columns]
@@ -3087,17 +3090,46 @@ elif seccion == "📥 Importar Booking":
                                  "entrada":      st.column_config.TextColumn("Entrada",       width=90),
                                  "salida":       st.column_config.TextColumn("Salida",        width=90),
                              })
-                c_si, c_no = st.columns(2)
-                ids_eliminar = [int(r["id"]) for _, r in df_cancel_bd.iterrows()]
-                if c_si.button("🗑️ Sí, eliminar reservas canceladas",
-                               type="primary", use_container_width=True, key="btn_del_cancel"):
-                    for rid in ids_eliminar:
-                        eliminar_reserva(rid)
-                    st.success(f"✅ {len(ids_eliminar)} reserva(s) cancelada(s) eliminadas.")
+                c_mark, c_del, c_keep = st.columns(3)
+                ids_cancel = [int(r["id"]) for _, r in df_cancel_bd.iterrows()]
+                # Opción recomendada: marcar como ANULADA (se mantienen visibles)
+                if c_mark.button(
+                    f"🚫 Marcar {len(ids_cancel)} como CANCELADAS (recomendado)",
+                    type="primary", use_container_width=True,
+                    key="btn_mark_cancel",
+                ):
+                    marcadas = 0
+                    for rid in ids_cancel:
+                        try:
+                            actualizar_reserva(rid, {"estado_pago": "RESERVA ANULADA"})
+                            marcadas += 1
+                        except Exception:
+                            pass
+                    st.success(
+                        f"✅ {marcadas} reserva(s) marcadas como CANCELADAS. "
+                        f"Se siguen viendo en Listado Raquel con la etiqueta 🚫."
+                    )
                     st.rerun()
-                if c_no.button("Mantener en la aplicación",
-                               use_container_width=True, key="btn_keep_cancel"):
-                    st.info("Las reservas canceladas se han mantenido en la aplicación.")
+                # Opción destructiva: borrar del todo
+                if c_del.button(
+                    f"🗑️ Eliminar permanentemente ({len(ids_cancel)})",
+                    use_container_width=True, key="btn_del_cancel",
+                ):
+                    for rid in ids_cancel:
+                        eliminar_reserva(rid)
+                    st.success(
+                        f"✅ {len(ids_cancel)} reserva(s) eliminada(s) por completo."
+                    )
+                    st.rerun()
+                # Opción de no hacer nada
+                if c_keep.button(
+                    "Dejar como están",
+                    use_container_width=True, key="btn_keep_cancel",
+                ):
+                    st.info(
+                        "No se ha tocado nada. Recuerda que si las dejas activas, "
+                        "Raquel las verá como reservas pendientes de limpiar."
+                    )
             elif canceladas_excel:
                 st.info(
                     f"ℹ️ {len(canceladas_excel)} reserva(s) cancelada(s) en el archivo "
