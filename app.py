@@ -587,9 +587,15 @@ def apto_libre(nombre_apto: str, f_ent: date, f_sal: date, reservas_df) -> bool:
     Regla mismo día: salida ≤12h · entrada ≥16h → compatible.
     Conflicto real: f_ent < salida_existente  AND  f_sal > entrada_existente
     Maneja cualquier formato de fecha (ISO, dd/mm/yyyy, etc.) sin errores silenciosos.
+    Las reservas canceladas / anuladas NO bloquean el apartamento: se ignoran
+    al calcular la disponibilidad, así una reserva de Booking que se cancele
+    deja la fecha libre para una nueva reserva.
     """
     for _, r in reservas_df.iterrows():
         if str(r.get("apartamento", "")).strip() != nombre_apto:
+            continue
+        # Ignorar reservas canceladas: no bloquean disponibilidad
+        if es_cancelada(r.get("estado_pago", "")):
             continue
         re_d = parse_date_safe(r.get("entrada", ""))
         rs_d = parse_date_safe(r.get("salida",  ""))
