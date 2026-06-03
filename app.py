@@ -416,13 +416,23 @@ def generar_pdf_raquel(df, f_desde=None, f_hasta=None) -> bytes:
     story.append(Paragraph(" · ".join(subt), subtitulo_style))
 
     # ── Tabla ─────────────────────────────────────────
-    cabeceras = [
-        "Propietario", "Fuente", "Cliente", "Apartamento",
-        "Entrada", "Salida", "Personas", "Peticiones",
-    ]
+    incluir_estado = "Estado" in df.columns
+    if incluir_estado:
+        cabeceras = [
+            "Estado", "Propietario", "Fuente", "Cliente", "Apartamento",
+            "Entrada", "Salida", "Personas", "Peticiones",
+        ]
+    else:
+        cabeceras = [
+            "Propietario", "Fuente", "Cliente", "Apartamento",
+            "Entrada", "Salida", "Personas", "Peticiones",
+        ]
     data = [cabeceras]
     for _, r in df.iterrows():
-        data.append([
+        row = []
+        if incluir_estado:
+            row.append(_p(r.get("Estado", ""), centro=True))
+        row.extend([
             _p(r.get("Propietario", ""), centro=True),
             _p(r.get("Fuente", ""),      centro=True),
             _p(r.get("Cliente", "")),
@@ -432,18 +442,23 @@ def generar_pdf_raquel(df, f_desde=None, f_hasta=None) -> bytes:
             _p(r.get("Personas", "")),
             _p(r.get("Peticiones", "")),
         ])
+        data.append(row)
 
     # Anchos por columna (suma ~273 mm = ancho útil A4 apaisado - margenes)
-    col_widths = [
+    col_widths_base = [
         22 * mm,   # Propietario
         25 * mm,   # Fuente
-        45 * mm,   # Cliente
-        45 * mm,   # Apartamento
+        42 * mm,   # Cliente
+        42 * mm,   # Apartamento
         18 * mm,   # Entrada
         18 * mm,   # Salida
-        30 * mm,   # Personas
-        70 * mm,   # Peticiones
+        28 * mm,   # Personas
+        53 * mm,   # Peticiones
     ]
+    if incluir_estado:
+        col_widths = [25 * mm] + col_widths_base
+    else:
+        col_widths = col_widths_base
 
     tabla = Table(data, colWidths=col_widths, repeatRows=1)
     tabla.setStyle(TableStyle([
@@ -940,7 +955,7 @@ def cargar_reservas() -> pd.DataFrame:
 # Campos "opcionales": columnas que pueden no existir aún en la BD
 # (introducidas en migraciones posteriores). Si la inserción/actualización
 # falla porque la BD aún no tiene la columna, se reintenta sin esos campos.
-_CAMPOS_OPCIONALES_BD = ("adultos", "ninos", "forma_pago")
+_CAMPOS_OPCIONALES_BD = ("adultos", "ninos", "forma_pago", "updated_at")
 
 def _payload_sin_opcionales(datos: dict) -> dict:
     return {k: v for k, v in datos.items() if k not in _CAMPOS_OPCIONALES_BD}
@@ -956,6 +971,11 @@ def guardar_reserva(datos: dict):
             raise
 
 def actualizar_reserva(id_reserva: int, datos: dict):
+    # Sello de "última modificación" para que Listado Raquel pueda marcar
+    # reservas como MODIFICADAS. Si la columna no existe se elimina en el
+    # reintento sin romper el update.
+    datos = dict(datos)
+    datos.setdefault("updated_at", datetime.utcnow().isoformat() + "Z")
     try:
         supabase.table("reservas").update(datos).eq("id", id_reserva).execute()
     except Exception as ex:
@@ -3241,9 +3261,10 @@ elif seccion == "📥 Importar Booking":
 elif seccion == "📋 Listado Raquel":
     st.markdown("### 📋 Listado Raquel")
     st.caption(
-        "Vista resumida: fuente, cliente, apartamento (cuántos y de qué tipo), "
-        "fechas, personas alojadas y peticiones. Las reservas multi-apartamento "
-        "aparecen en una sola línea."
+        "Vista completa para Raquel: incluye **todas las directas, "
+        "nuevas, modificadas y canceladas** (ignora los filtros de "
+        "Fuente y 'Mostrar canceladas' del menú lateral). La columna "
+        "Estado avisa de los cambios recientes."
     )
 
     # ── Filtro por fechas ──────────────────────────────
@@ -3281,16 +3302,29 @@ elif seccion == "📋 Listado Raquel":
     if f_desde and f_hasta and f_desde > f_hasta:
         f_desde, f_hasta = f_hasta, f_desde
 
-    # Aplicar el filtro de fechas (solape de estancia con el rango)
-    df_base = df_filtrado
-    if aplicar_fechas and f_desde and f_hasta:
+    # ── Base del listado: usamos TODAS las reservas (df, no df_filtrado) ─
+    # Asi siempre se ven directas + canceladas, aunque el sidebar las oculte
+    # en otras secciones. Solo aplicamos los filtros del sidebar que NO
+    # ocultan informacion relevante (mes, nombre, dormitorios).
+    df_base = df.copy() if not df.empty else df
+    if not df_base.empty:
+        if filtro_mes:
+            df_base = df_base[df_base["mes"].isin(filtro_mes)]
+        if filtro_nombre:
+            df_base = df_base[
+                df_base["nombre"].astype(str).str.contains(filtro_nombre, case=False, na=False)
+            ]
+        if filtro_dorm:
+            df_base = df_base[df_base["dormitorios"].astype(str).isin(filtro_dorm)]
+
+    if aplicar_fechas and f_desde and f_hasta and not df_base.empty:
         def _solapa_rango(row):
             e = parse_date_safe(row.get("entrada", ""))
             s = parse_date_safe(row.get("salida", ""))
             if not e or not s:
                 return False
             return e <= f_hasta and s >= f_desde
-        df_base = df_filtrado[df_filtrado.apply(_solapa_rango, axis=1)]
+        df_base = df_base[df_base.apply(_solapa_rango, axis=1)]
         st.caption(
             f"🗓️ Mostrando reservas que cubren algún día entre "
             f"**{f_desde.strftime('%d/%m/%Y')}** y **{f_hasta.strftime('%d/%m/%Y')}**."
@@ -3340,6 +3374,47 @@ elif seccion == "📋 Listado Raquel":
                 return str(total) if total else ""
             return f"{total} ({adultos} ad + {ninos} niños)"
 
+        def _ts(v):
+            """Parsea timestamps ISO 8601 (created_at / updated_at) de Supabase."""
+            if v is None or (isinstance(v, float) and pd.isna(v)) or v == "":
+                return None
+            try:
+                return pd.to_datetime(v, utc=True, errors="coerce")
+            except Exception:
+                return None
+
+        ahora_utc = pd.Timestamp.utcnow().tz_convert("UTC") if hasattr(pd.Timestamp.utcnow(), "tz_convert") else pd.Timestamp.utcnow().tz_localize("UTC")
+        UMBRAL_NUEVA       = pd.Timedelta(days=7)
+        UMBRAL_MODIFICADA  = pd.Timedelta(hours=1)
+
+        def _estado_grupo(grupo) -> str:
+            """Etiqueta resumen del estado del grupo:
+              - 🚫 CANCELADA si cualquier fila esta cancelada.
+              - ✨ NUEVA si la mas reciente created_at esta dentro de 7 dias.
+              - 🔄 MODIFICADA si updated_at > created_at + 1h.
+              - vacio en otro caso (ACTIVA)."""
+            # Cancelada (cualquier fila del grupo)
+            for _, r in grupo.iterrows():
+                if es_cancelada(r.get("estado_pago", "")):
+                    return "🚫 CANCELADA"
+            created_max = None
+            updated_max = None
+            for _, r in grupo.iterrows():
+                c = _ts(r.get("created_at"))
+                u = _ts(r.get("updated_at"))
+                if c is not None and pd.notna(c):
+                    created_max = c if created_max is None else max(created_max, c)
+                if u is not None and pd.notna(u):
+                    updated_max = u if updated_max is None else max(updated_max, u)
+            # Nueva: creada en los últimos 7 días
+            if created_max is not None and (ahora_utc - created_max) <= UMBRAL_NUEVA:
+                return "✨ NUEVA"
+            # Modificada: updated_at > created_at + 1h
+            if (updated_max is not None and created_max is not None
+                    and (updated_max - created_max) > UMBRAL_MODIFICADA):
+                return "🔄 MODIFICADA"
+            return ""
+
         # Agrupar por nº de reserva base (quitar sufijo "-N" de multi-apto)
         df_r = df_base.copy()
         df_r["_nro_base"] = (
@@ -3365,6 +3440,7 @@ elif seccion == "📋 Listado Raquel":
                 peticiones_es  = traducir_a_espanol(peticiones_raw)
 
                 filas_raquel.append({
+                    "Estado":      _estado_grupo(grupo),
                     "Propietario": _propietario_grupo(grupo),
                     "Fuente":      primera.get("fuente", "") or "",
                     "Cliente":     primera.get("nombre", "") or "",
@@ -3390,9 +3466,10 @@ elif seccion == "📋 Listado Raquel":
             use_container_width=True,
             hide_index=True,
             height=min(80 + 35 * len(df_raquel), 700),
-            disabled=["Propietario", "Fuente", "Cliente", "Apartamento",
-                      "Entrada", "Salida", "Personas"],
+            disabled=["Estado", "Propietario", "Fuente", "Cliente",
+                      "Apartamento", "Entrada", "Salida", "Personas"],
             column_config={
+                "Estado":      st.column_config.TextColumn(width=130),
                 "Propietario": st.column_config.TextColumn(width=110),
                 "Fuente":      st.column_config.TextColumn(width=120),
                 "Cliente":     st.column_config.TextColumn(width=200),

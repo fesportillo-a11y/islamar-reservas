@@ -255,6 +255,26 @@ mano), aplicando ahora también `adultos` y `ninos`.
 
 ---
 
+## PASO 7.2 · Habilitar la columna Estado en Listado Raquel (opcional)
+
+El Listado Raquel marca las reservas con etiquetas:
+* 🚫 **CANCELADA** — funciona sin SQL extra (se detecta por estado_pago).
+* ✨ **NUEVA** — funciona sin SQL extra (usa la columna `created_at` que ya existe).
+* 🔄 **MODIFICADA** — necesita una columna `updated_at` para detectar cuándo
+  se ha editado una reserva.
+
+Para activar el detector de modificaciones:
+
+```sql
+ALTER TABLE reservas ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+NOTIFY pgrst, 'reload schema';
+```
+
+Sin esto, las CANCELADAS y NUEVAS siguen apareciendo; solo MODIFICADA se queda
+en blanco.
+
+---
+
 ## PASO 7.1 · Habilitar el campo "Forma de pago" (opcional)
 
 En el formulario de **Nueva reserva** y **Editar reserva** hay un desplegable
