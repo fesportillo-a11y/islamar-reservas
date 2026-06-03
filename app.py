@@ -728,36 +728,20 @@ def _build_authenticator():
 
 authenticator, BOOTSTRAP_ADMINS = _build_authenticator()
 
-# Reservamos un hueco ARRIBA del formulario de login para poder pintar la
-# portada solo cuando el usuario aún no está autenticado.
-hero_slot = st.empty()
+# ── FLUJO DE LOGIN ───────────────────────────────────────────────────
+# Si el usuario YA tiene sesión válida (cookie reciente), saltamos toda la
+# pantalla de portada y formulario y vamos directos a la app.
+# Si NO, pintamos la portada hero + formulario y paramos hasta que valide.
+_pre_auth = st.session_state.get("authentication_status") is True
 
-# Renderiza el formulario de login en el área principal
-try:
-    authenticator.login(
-        location="main",
-        fields={
-            "Form name": "Iniciar sesión",
-            "Username":  "Usuario",
-            "Password":  "Contraseña",
-            "Login":     "Entrar",
-        },
-    )
-except Exception as ex:
-    st.error(f"Error en el sistema de login: {ex}")
-    st.stop()
-
-auth_status = st.session_state.get("authentication_status")
-
-# ── PORTADA HERO solo si NO está autenticado ─────────────────────────
-# El CSS oculta el sidebar y la cabecera de Streamlit en la pantalla de
-# login, pinta una imagen de fondo con velo oscuro y centra el formulario
-# con efecto cristal. Una vez logueado, este hueco queda vacío y los
-# estilos no se aplican (Streamlit los descarta entre reruns).
-if auth_status is not True:
-    with hero_slot.container():
-        st.markdown(
-            """
+if not _pre_auth:
+    # ── PORTADA HERO + estilos del formulario de login ───────────────
+    # El CSS solo se inyecta cuando aún NO estás autenticado: oculta el
+    # sidebar y la cabecera, pone imagen de fondo y maquetación del form.
+    # Tras un login exitoso forzamos st.rerun() para que el CSS no quede
+    # pegado a la sesión normal.
+    st.markdown(
+        """
 <style>
 /* — Oculta el sidebar y vuelve transparente la cabecera mientras dura el login — */
 section[data-testid="stSidebar"] { display: none !important; }
@@ -918,20 +902,41 @@ header[data-testid="stHeader"]    { background: transparent !important; box-shad
     <div class="dash">— ISLAMAR —</div>
     <p>Sistema profesional de gestión de reservas<br>diseñado para la eficiencia y la claridad</p>
 </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-if auth_status is False:
-    st.error("Usuario o contraseña incorrectos.")
-    st.stop()
-elif auth_status is None:
-    # El hero ya da el contexto visual; no añadimos más mensajería.
-    st.markdown(
-        '<div class="islamar-foot">ESTEASUR 2015 · ISLAMAR · Acceso privado</div>',
+        """,
         unsafe_allow_html=True,
     )
-    st.stop()
+
+    # Renderiza el formulario de login DESPUÉS del hero
+    try:
+        authenticator.login(
+            location="main",
+            fields={
+                "Form name": "Iniciar sesión",
+                "Username":  "Usuario",
+                "Password":  "Contraseña",
+                "Login":     "Entrar",
+            },
+        )
+    except Exception as ex:
+        st.error(f"Error en el sistema de login: {ex}")
+        st.stop()
+
+    auth_status = st.session_state.get("authentication_status")
+
+    if auth_status is True:
+        # Login OK justo ahora — forzamos un rerender limpio para que el
+        # CSS del hero NO siga inyectado en la pantalla normal.
+        st.rerun()
+    elif auth_status is False:
+        st.error("Usuario o contraseña incorrectos.")
+        st.stop()
+    else:
+        # Aún sin validar (primera visita). Pie discreto y stop.
+        st.markdown(
+            '<div class="islamar-foot">ESTEASUR 2015 · ISLAMAR · Acceso privado</div>',
+            unsafe_allow_html=True,
+        )
+        st.stop()
 
 # A partir de aquí, el usuario está autenticado.
 USER_NAME     = st.session_state.get("name", "")
