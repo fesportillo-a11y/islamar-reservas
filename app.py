@@ -123,7 +123,8 @@ def generar_pdf_plantilla(grid, aptos, n_dias, mes_str, anio,
         "#1A7A6E", "#A0522D", "#1B3A6B", "#7A5C00", "#5B3A8A",
         "#2B7A4B", "#8B3A62", "#2C4E70", "#6B5C2E",
     ]
-    BAR_BG     = "#A8CCEB"
+    BAR_BG_BK  = "#A8CCEB"   # azul claro (Booking)
+    BAR_BG_DIR = "#C8E6CF"   # verde claro (Directa)
     HEADER_BG  = "#1F4E79"
     APTO_BG    = "#2C5F8A"
     WEEKEND_BG = "#ECEFF1"
@@ -132,6 +133,11 @@ def generar_pdf_plantilla(grid, aptos, n_dias, mes_str, anio,
 
     def _color_reserva(rid):
         return PALETA[int(rid) % len(PALETA)]
+
+    def _bar_bg(fuente_str):
+        if str(fuente_str).upper().strip() == "DIRECTA":
+            return BAR_BG_DIR
+        return BAR_BG_BK
 
     juanma_set = juanma_set or set()
     buf = BytesIO()
@@ -253,9 +259,11 @@ def generar_pdf_plantilla(grid, aptos, n_dias, mes_str, anio,
                     f'<font color="{col_in}"><b>▶ {_xml_escape(nombre_in)}</b></font>'
                 )
                 data[row_idx][d] = Paragraph(combined, split_style)
+                # Para el split usamos el color de la entrada (la reserva que
+                # se queda), igual que en HTML cuando la barra se cierra abajo
                 style_cmds.append((
                     "BACKGROUND", (d, row_idx), (d, row_idx),
-                    _rl_colors.HexColor(BAR_BG),
+                    _rl_colors.HexColor(_bar_bg(c.get("fuente", ""))),
                 ))
                 d += 1
                 continue
@@ -270,7 +278,7 @@ def generar_pdf_plantilla(grid, aptos, n_dias, mes_str, anio,
                 data[row_idx][d] = Paragraph(solo_out, name_style)
                 style_cmds.append((
                     "BACKGROUND", (d, row_idx), (d, row_idx),
-                    _rl_colors.HexColor(BAR_BG),
+                    _rl_colors.HexColor(_bar_bg(c_out.get("fuente", ""))),
                 ))
                 d += 1
                 continue
@@ -309,7 +317,7 @@ def generar_pdf_plantilla(grid, aptos, n_dias, mes_str, anio,
                 ))
             style_cmds.append((
                 "BACKGROUND", (d, row_idx), (span_end, row_idx),
-                _rl_colors.HexColor(BAR_BG),
+                _rl_colors.HexColor(_bar_bg(c.get("fuente", ""))),
             ))
             d = span_end + 1
 
@@ -1519,40 +1527,103 @@ if seccion == "📊 Reservas":
 elif seccion == "➕ Nueva reserva":
     st.markdown("### ➕ Añadir nueva reserva")
 
+    # ── Paso 1: fechas y tipo (fuera del form para que el selector de
+    # apartamento se actualice en vivo) ──────────────────────────────────
+    st.markdown("**1️⃣ Fechas y tipo de apartamento**")
+    pa1, pa2, pa3 = st.columns(3)
+    with pa1:
+        entrada = st.date_input(
+            "Fecha entrada *", value=None, format="DD/MM/YYYY",
+            key="nr_entrada",
+        )
+    with pa2:
+        salida = st.date_input(
+            "Fecha salida *", value=None, format="DD/MM/YYYY",
+            key="nr_salida",
+        )
+    with pa3:
+        dormitorios = st.selectbox(
+            "Tipo de apartamento", DORMS, key="nr_dorm",
+        )
+
+    # Calcular apartamentos disponibles
+    aptos_disponibles = []
+    fechas_ok = bool(entrada and salida and salida > entrada)
+    if fechas_ok:
+        candidatos = APTOS_POR_TIPO.get(dormitorios, [])
+        for apto in candidatos:
+            if apto_libre(apto, entrada, salida, df):
+                aptos_disponibles.append(apto)
+        if aptos_disponibles:
+            st.success(
+                f"✅ **{len(aptos_disponibles)} apartamento(s) libre(s)** "
+                f"del tipo **{dormitorios}** entre "
+                f"{entrada.strftime('%d/%m/%Y')} y {salida.strftime('%d/%m/%Y')}."
+            )
+        else:
+            st.error(
+                f"⛔ No hay apartamentos libres del tipo **{dormitorios}** "
+                f"en esas fechas."
+            )
+    elif entrada and salida and salida <= entrada:
+        st.warning("La fecha de salida debe ser posterior a la de entrada.")
+    else:
+        st.info("Selecciona las fechas para ver los apartamentos disponibles.")
+
+    st.markdown("---")
+    st.markdown("**2️⃣ Datos de la reserva**")
+
     with st.form("form_nueva", clear_on_submit=True):
         c1, c2 = st.columns(2)
         with c1:
             fuente      = st.selectbox("Fuente *", FUENTES)
             nombre      = st.text_input("Nombre del cliente *")
             nro_reserva = st.text_input("Nº de reserva")
-            apartamento = st.selectbox("Apartamento *", [""] + APTOS)
-            dormitorios = st.selectbox("Dormitorios", DORMS)
-            mes         = st.selectbox("Mes *", MESES)
+            apartamento = st.selectbox(
+                "Apartamento * (solo libres en esas fechas)",
+                [""] + aptos_disponibles,
+                disabled=not aptos_disponibles,
+                help=(
+                    "Aparecen únicamente los apartamentos del tipo elegido "
+                    "que están libres entre las fechas indicadas arriba."
+                ),
+            )
+            mes         = st.selectbox(
+                "Mes *",
+                MESES,
+                index=(entrada.month - 1) if entrada else 0,
+            )
         with c2:
-            entrada     = st.date_input("Fecha entrada *", value=None, format="DD/MM/YYYY")
-            salida      = st.date_input("Fecha salida *",  value=None, format="DD/MM/YYYY")
             personas    = st.text_input("Nº personas")
             precio      = st.text_input("Precio (€)")
             estado_pago = st.selectbox("Estado de pago", ESTADOS)
-
-        c3, c4 = st.columns(2)
-        with c3:
             pago_cta    = st.text_input("Pago a cuenta (€)")
             fecha_ing   = st.text_input("Fecha ingreso")
-        with c4:
             resto_pdte  = st.text_input("Resto pendiente (€)")
 
         comentarios = st.text_area("Comentarios", height=80)
 
-        submitted = st.form_submit_button("💾 Guardar reserva", type="primary", use_container_width=True)
+        submitted = st.form_submit_button(
+            "💾 Guardar reserva", type="primary", use_container_width=True,
+            disabled=not aptos_disponibles,
+        )
 
     if submitted:
         errores = []
-        if not nombre:  errores.append("El nombre es obligatorio.")
-        if not entrada: errores.append("La fecha de entrada es obligatoria.")
-        if not salida:  errores.append("La fecha de salida es obligatoria.")
-        if entrada and salida and salida <= entrada:
-            errores.append("La fecha de salida debe ser posterior a la de entrada.")
+        if not fechas_ok:
+            errores.append("Elige primero unas fechas válidas (paso 1).")
+        if not nombre:
+            errores.append("El nombre es obligatorio.")
+        if not apartamento:
+            errores.append("Selecciona un apartamento de la lista.")
+        # Re-validar disponibilidad al guardar (puede haber cambiado si otro
+        # usuario ha creado una reserva en el ínterin).
+        if apartamento and fechas_ok:
+            if not apto_libre(apartamento, entrada, salida, cargar_reservas()):
+                errores.append(
+                    f"⚠️ El apartamento **{apartamento}** ya está ocupado en "
+                    f"esas fechas. Refresca y elige otro."
+                )
 
         if errores:
             for e in errores:
@@ -2150,10 +2221,26 @@ elif seccion == "📅 Plantilla mensual":
             "#6B5C2E",  # marrón kaki
         ]
 
-        # Fondo azul claro uniforme para TODAS las barras de reservas.
-        # El color por reserva ya no es el fondo sino el TEXTO del nombre.
-        BAR_BG       = "#7FB3DC"   # azul medio
-        BAR_BORDER   = "#4A82A8"   # azul oscuro para el contorno
+        # Fondo de las barras de reservas según la fuente:
+        # - BOOKING.COM → azul medio
+        # - DIRECTA     → verde claro
+        # El color por reserva (de la paleta) se aplica al TEXTO del nombre.
+        BAR_BG_BK     = "#7FB3DC"   # azul medio (Booking)
+        BAR_BORDER_BK = "#4A82A8"
+        BAR_BG_DIR    = "#A8D8B0"   # verde claro (Directa)
+        BAR_BORDER_DIR = "#4F9B5A"
+
+        def _bar_colors(fuente_str):
+            """Devuelve (fondo, borde) según fuente. DIRECTA → verde,
+            BOOKING.COM y cualquier otro → azul."""
+            if str(fuente_str).upper().strip() == "DIRECTA":
+                return BAR_BG_DIR, BAR_BORDER_DIR
+            return BAR_BG_BK, BAR_BORDER_BK
+
+        # Compat: mantenemos BAR_BG / BAR_BORDER por defecto (Booking) para
+        # los pocos sitios donde no hay fuente disponible.
+        BAR_BG     = BAR_BG_BK
+        BAR_BORDER = BAR_BORDER_BK
 
         def _color_reserva(rid=0):
             """Color del TEXTO del nombre del cliente, único por reserva."""
@@ -2176,15 +2263,17 @@ elif seccion == "📅 Plantilla mensual":
                     # ── Casilla dividida: checkout arriba / checkin abajo ──
                     txt_out = _color_reserva(c_out["id"])
                     txt_in  = _color_reserva(c["id"])
+                    bg_out, _b_out = _bar_colors(c_out.get("fuente", ""))
+                    bg_in,  brd_in = _bar_colors(c.get("fuente", ""))
                     tip = f"SALE: {c_out['nombre']} ({c_out['salida']}) / ENTRA: {c['nombre']} ({c['entrada']})"
                     html += (
                         f'<td class="td{wc}" style="padding:0;position:relative;overflow:hidden;" title="{tip}">'
-                        f'<div style="position:absolute;top:0;left:0;right:0;height:50%;background:{BAR_BG};'
+                        f'<div style="position:absolute;top:0;left:0;right:0;height:50%;background:{bg_out};'
                         f'display:flex;align-items:center;overflow:hidden;">'
                         f'<span style="color:{txt_out};font-size:0.74rem;font-weight:800;padding:0 6px;'
                         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">◀ {c_out["nombre"]}</span></div>'
-                        f'<div style="position:absolute;top:50%;left:0;right:0;height:50%;background:{BAR_BG};'
-                        f'border-top:2px solid {BAR_BORDER};display:flex;align-items:center;overflow:hidden;">'
+                        f'<div style="position:absolute;top:50%;left:0;right:0;height:50%;background:{bg_in};'
+                        f'border-top:2px solid {brd_in};display:flex;align-items:center;overflow:hidden;">'
                         f'<span style="color:{txt_in};font-size:0.74rem;font-weight:800;padding:0 6px;'
                         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">▶ {c["nombre"]}</span></div>'
                         f'</td>'
@@ -2204,6 +2293,7 @@ elif seccion == "📅 Plantilla mensual":
                     colspan = span_end - d + 1
 
                     txt_color      = _color_reserva(curr_rid)
+                    bar_bg, bar_brd = _bar_colors(c.get("fuente", ""))
                     started_before = (c["edia"] == 0)       # empezó antes del mes
                     ends_after     = (c["sdia"] > n_dias)   # termina después del mes
 
@@ -2223,8 +2313,8 @@ elif seccion == "📅 Plantilla mensual":
                         f'<td class="td{wc}" colspan="{colspan}" '
                         f'style="padding:0;position:relative;overflow:hidden;" title="{tip}">'
                         f'<div style="position:absolute;top:6px;bottom:6px;'
-                        f'left:{left_px};right:{right_px};background:{BAR_BG};'
-                        f'border:1px solid {BAR_BORDER};border-radius:{brad};overflow:hidden;'
+                        f'left:{left_px};right:{right_px};background:{bar_bg};'
+                        f'border:1px solid {bar_brd};border-radius:{brad};overflow:hidden;'
                         f'display:flex;align-items:center;padding:0 10px;">'
                         f'<span style="font-size:0.83rem;font-weight:800;color:{txt_color};'
                         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
@@ -2235,11 +2325,12 @@ elif seccion == "📅 Plantilla mensual":
                 elif c_out:
                     # ── Solo checkout ese día (sin nueva entrada) ──
                     txt_out = _color_reserva(c_out["id"])
+                    bg_out, _b_out = _bar_colors(c_out.get("fuente", ""))
                     fbg = "#eaecef" if wd >= 5 else "#fafbfd"
                     tip = f"SALE: {c_out['nombre']} ({c_out['salida']})"
                     html += (
                         f'<td class="td{wc}" style="padding:0;position:relative;overflow:hidden;" title="{tip}">'
-                        f'<div style="position:absolute;top:0;left:0;right:0;height:50%;background:{BAR_BG};'
+                        f'<div style="position:absolute;top:0;left:0;right:0;height:50%;background:{bg_out};'
                         f'display:flex;align-items:center;overflow:hidden;">'
                         f'<span style="color:{txt_out};font-size:0.74rem;font-weight:800;padding:0 6px;'
                         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">◀ {c_out["nombre"]}</span></div>'
@@ -2260,7 +2351,11 @@ elif seccion == "📅 Plantilla mensual":
 
         st.markdown("""
         <div style="display:flex;gap:14px;align-items:center;font-size:0.78rem;margin-bottom:6px;flex-wrap:wrap;">
-          <span style="color:#888;">El color del texto identifica cada reserva &nbsp;|&nbsp;
+          <span style="display:inline-block;width:14px;height:14px;background:#7FB3DC;border:1px solid #4A82A8;border-radius:3px;"></span>
+          <span style="color:#888;">BOOKING.COM</span>
+          <span style="display:inline-block;width:14px;height:14px;background:#A8D8B0;border:1px solid #4F9B5A;border-radius:3px;"></span>
+          <span style="color:#888;">DIRECTA</span>
+          <span style="color:#888;">&nbsp;|&nbsp; El color del texto identifica cada reserva &nbsp;|&nbsp;
           ↩ Entró mes anterior &nbsp;|&nbsp; ◀/▶ Casilla dividida (salida/entrada mismo día) &nbsp;|&nbsp; Gris = fin de semana</span>
         </div>
         """, unsafe_allow_html=True)
