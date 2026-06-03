@@ -3453,11 +3453,18 @@ elif seccion == "📋 Listado Raquel":
                 return "🔄 MODIFICADA"
             return ""
 
-        # Agrupar por nº de reserva base (quitar sufijo "-N" de multi-apto)
+        # Agrupar por nº de reserva base (quitar sufijo "-N" de multi-apto).
+        # Si una reserva NO tiene Nº (típico de directas creadas desde la app),
+        # se usa su propio `id` como clave para que NO se agrupe con las demás
+        # reservas sin Nº (antes se fusionaban todas en una sola línea).
         df_r = df_base.copy()
-        df_r["_nro_base"] = (
-            df_r["nro_reserva"].astype(str).str.replace(r"-\d+$", "", regex=True)
-        )
+        def _nro_base_clave(row):
+            nro = str(row.get("nro_reserva", "") or "").strip()
+            nro_clean = re.sub(r"-\d+$", "", nro)
+            if not nro_clean or nro_clean.lower() == "nan":
+                return f"__id_{int(row['id'])}"
+            return nro_clean
+        df_r["_nro_base"] = df_r.apply(_nro_base_clave, axis=1)
 
         filas_raquel = []
         nro_bases    = []                      # para mapear filas → reservas en BD
@@ -3536,11 +3543,19 @@ elif seccion == "📋 Listado Raquel":
                     if nuevo == antiguo:
                         continue
                     nro_base = nro_bases[i]
-                    # Localizar TODAS las filas (multi-apto) que comparten ese nº base
-                    bases = df_base["nro_reserva"].astype(str).str.replace(
-                        r"-\d+$", "", regex=True
-                    )
-                    reservas_grupo = df_base[bases == nro_base]
+                    # Localizar TODAS las filas (multi-apto) que comparten ese nº base.
+                    # Para reservas sin Nº la clave es "__id_<id>": solo afecta esa fila.
+                    if nro_base.startswith("__id_"):
+                        try:
+                            target_id = int(nro_base.removeprefix("__id_"))
+                            reservas_grupo = df_base[df_base["id"].astype(int) == target_id]
+                        except Exception:
+                            reservas_grupo = df_base.iloc[0:0]
+                    else:
+                        bases = df_base["nro_reserva"].astype(str).str.replace(
+                            r"-\d+$", "", regex=True
+                        )
+                        reservas_grupo = df_base[bases == nro_base]
                     for _, r in reservas_grupo.iterrows():
                         try:
                             actualizar_reserva(int(r["id"]), {"comentarios": nuevo})
