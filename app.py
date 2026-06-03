@@ -1396,9 +1396,11 @@ with st.sidebar:
         "➕ Nueva reserva",
         "✏️ Editar reserva",
     ]
-    # NOTA: la pantalla "👥 Usuarios" está desactivada (queda como código muerto
-    # en el bloque elif del mismo nombre). Los usuarios se gestionan únicamente
-    # desde Streamlit Cloud → Misterios (ver GUIA_DESPLIEGUE.md, PASO 5).
+    # Pantalla "👥 Usuarios": solo visible para admins (los de st.secrets["auth"]
+    # son admins automáticamente). Si la tabla `usuarios` aún no existe en
+    # Supabase, la pantalla mostrará la lista vacía pero no romperá nada.
+    if IS_ADMIN:
+        _secciones_nav.append("👥 Usuarios")
     seccion = st.radio("nav", _secciones_nav, label_visibility="collapsed")
 
     # Filtros
