@@ -110,6 +110,179 @@ def format_eur(v) -> str:
         return ""
     return f"{f:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " €"
 
+def generar_excel_plantilla(grid, aptos, n_dias, mes_str, anio,
+                            primer_dia, juanma_set=None, salida_map=None) -> bytes:
+    """Genera el calendario mensual como Excel (.xlsx), con la misma estetica
+    que la vista HTML / PDF: barras de color por fuente (azul Booking, verde
+    Directa), nombre del cliente en color de la paleta, fines de semana
+    sombreados y separador JUANMA. Cada reserva multidia se muestra en una
+    celda combinada para que el nombre quede centrado."""
+    PALETA = [
+        "1F4E79", "C0622A", "2E8B6E", "7B3FA0", "B5452A",
+        "1A7A6E", "A0522D", "1B3A6B", "7A5C00", "5B3A8A",
+        "2B7A4B", "8B3A62", "2C4E70", "6B5C2E",
+    ]
+    BAR_BG_BK  = "A8CCEB"
+    BAR_BG_DIR = "C8E6CF"
+    HEADER_BG  = "1F4E79"
+    APTO_BG    = "2C5F8A"
+    WEEKEND_BG = "ECEFF1"
+    SEP_BG     = "BDD7EE"
+    DIAS_SEM   = ["L", "M", "X", "J", "V", "S", "D"]
+    juanma_set = juanma_set or set()
+    salida_map = salida_map or {}
+
+    def _color_reserva(rid):
+        return PALETA[int(rid) % len(PALETA)]
+
+    def _bar_bg(fuente_str):
+        if str(fuente_str).upper().strip() == "DIRECTA":
+            return BAR_BG_DIR
+        return BAR_BG_BK
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = f"{mes_str.title()[:10]} {anio}"
+
+    thin = Side(style="thin", color="CCCCCC")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    # ── Cabecera ────────────────────────────────────
+    ws.cell(row=1, column=1, value=f"{mes_str.title()} {anio}")
+    for d in range(1, n_dias + 1):
+        wd = (primer_dia + d - 1) % 7
+        ws.cell(row=1, column=d + 1, value=f"{d}\n{DIAS_SEM[wd]}")
+
+    for col in range(1, n_dias + 2):
+        cell = ws.cell(row=1, column=col)
+        cell.font      = Font(bold=True, color="FFFFFF", size=10, name="Calibri")
+        cell.fill      = PatternFill("solid", fgColor=HEADER_BG)
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border    = border
+    ws.row_dimensions[1].height = 30
+
+    # ── Filas por apartamento ──────────────────────
+    row_idx = 1
+    juanma_inserted = False
+    for apto in aptos:
+        if (not juanma_inserted) and apto in juanma_set:
+            row_idx += 1
+            ws.cell(row=row_idx, column=1, value="▸ JUANMA")
+            ws.merge_cells(
+                start_row=row_idx, start_column=1,
+                end_row=row_idx,   end_column=n_dias + 1,
+            )
+            sep_cell = ws.cell(row=row_idx, column=1)
+            sep_cell.font      = Font(bold=True, color="1F4E79", size=10, name="Calibri")
+            sep_cell.fill      = PatternFill("solid", fgColor=SEP_BG)
+            sep_cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+            sep_cell.border    = border
+            ws.row_dimensions[row_idx].height = 18
+            juanma_inserted = True
+
+        row_idx += 1
+        # Nombre del apartamento
+        apto_cell = ws.cell(row=row_idx, column=1, value=apto)
+        apto_cell.font      = Font(bold=True, color="FFFFFF", size=9, name="Calibri")
+        apto_cell.fill      = PatternFill("solid", fgColor=APTO_BG)
+        apto_cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+        apto_cell.border    = border
+
+        # Pre-rellenar borde y posible fondo fin de semana en cada día libre
+        for d in range(1, n_dias + 1):
+            wd = (primer_dia + d - 1) % 7
+            c = ws.cell(row=row_idx, column=d + 1)
+            c.border = border
+            if wd >= 5:
+                c.fill = PatternFill("solid", fgColor=WEEKEND_BG)
+
+        # Recorrer los días asignando las reservas
+        d = 1
+        while d <= n_dias:
+            c_     = grid.get(apto, {}).get(d)
+            c_out  = salida_map.get((apto, d))
+
+            # (1) Casilla dividida: salida de X y entrada de Y el mismo día
+            if c_ and c_out and c_.get("id") != c_out.get("id"):
+                nombre_out = str(c_out.get("nombre", ""))[:25]
+                nombre_in  = str(c_.get("nombre", ""))[:25]
+                bg = _bar_bg(c_.get("fuente", ""))
+                cell = ws.cell(row=row_idx, column=d + 1,
+                               value=f"◀ {nombre_out}\n▶ {nombre_in}")
+                cell.fill      = PatternFill("solid", fgColor=bg)
+                cell.font      = Font(bold=True, color=_color_reserva(c_["id"]),
+                                      size=7, name="Calibri")
+                cell.alignment = Alignment(horizontal="center", vertical="center",
+                                           wrap_text=True)
+                cell.border    = border
+                d += 1
+                continue
+
+            # (2) Solo salida ese día (sin entrada nueva)
+            if c_out and not c_:
+                nombre = str(c_out.get("nombre", ""))[:25]
+                bg = _bar_bg(c_out.get("fuente", ""))
+                cell = ws.cell(row=row_idx, column=d + 1, value=f"◀ {nombre}")
+                cell.fill      = PatternFill("solid", fgColor=bg)
+                cell.font      = Font(bold=True, color=_color_reserva(c_out["id"]),
+                                      size=8, name="Calibri")
+                cell.alignment = Alignment(horizontal="center", vertical="center",
+                                           wrap_text=True)
+                cell.border    = border
+                d += 1
+                continue
+
+            # (3) Día libre
+            if c_ is None:
+                d += 1
+                continue
+
+            # (4) Estancia normal: agrupar días consecutivos
+            curr_id = c_["id"]
+            span_end = d
+            while span_end < n_dias:
+                nc = grid[apto].get(span_end + 1)
+                if nc is None or nc.get("id") != curr_id:
+                    break
+                nc_out = salida_map.get((apto, span_end + 1))
+                if nc_out and nc_out.get("id") != curr_id:
+                    break
+                span_end += 1
+
+            nombre = str(c_.get("nombre", ""))[:40]
+            bg = _bar_bg(c_.get("fuente", ""))
+            txt_col = _color_reserva(curr_id)
+
+            # Combinar las celdas de la estancia para centrar el nombre
+            if span_end > d:
+                ws.merge_cells(
+                    start_row=row_idx, start_column=d + 1,
+                    end_row=row_idx,   end_column=span_end + 1,
+                )
+            cell = ws.cell(row=row_idx, column=d + 1, value=nombre)
+            cell.fill      = PatternFill("solid", fgColor=bg)
+            cell.font      = Font(bold=True, color=txt_col, size=9, name="Calibri")
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border    = border
+
+            d = span_end + 1
+
+        # Altura de fila de apartamento
+        ws.row_dimensions[row_idx].height = 22
+
+    # ── Ancho de columnas ─────────────────────────
+    ws.column_dimensions["A"].width = 24
+    for d in range(1, n_dias + 1):
+        ws.column_dimensions[get_column_letter(d + 1)].width = 9
+
+    # Congelar primera fila y primera columna para scroll cómodo
+    ws.freeze_panes = "B2"
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def generar_pdf_plantilla(grid, aptos, n_dias, mes_str, anio,
                           primer_dia, juanma_set=None, salida_map=None) -> bytes:
     """Genera el calendario mensual (Plantilla mensual) como PDF A4 apaisado,
@@ -416,17 +589,19 @@ def generar_pdf_raquel(df, f_desde=None, f_hasta=None) -> bytes:
     story.append(Paragraph(" · ".join(subt), subtitulo_style))
 
     # ── Tabla ─────────────────────────────────────────
-    incluir_estado = "Estado" in df.columns
+    incluir_estado   = "Estado" in df.columns
+    incluir_telefono = "Teléfono" in df.columns
     if incluir_estado:
         cabeceras = [
-            "Estado", "Propietario", "Fuente", "Cliente", "Apartamento",
-            "Entrada", "Salida", "Personas", "Peticiones",
+            "Estado", "Propietario", "Fuente", "Cliente",
         ]
     else:
         cabeceras = [
-            "Propietario", "Fuente", "Cliente", "Apartamento",
-            "Entrada", "Salida", "Personas", "Peticiones",
+            "Propietario", "Fuente", "Cliente",
         ]
+    if incluir_telefono:
+        cabeceras.append("Teléfono")
+    cabeceras.extend(["Apartamento", "Entrada", "Salida", "Personas", "Peticiones"])
     data = [cabeceras]
     for _, r in df.iterrows():
         row = []
@@ -436,6 +611,10 @@ def generar_pdf_raquel(df, f_desde=None, f_hasta=None) -> bytes:
             _p(r.get("Propietario", ""), centro=True),
             _p(r.get("Fuente", ""),      centro=True),
             _p(r.get("Cliente", "")),
+        ])
+        if incluir_telefono:
+            row.append(_p(r.get("Teléfono", "")))
+        row.extend([
             _p(r.get("Apartamento", "")),
             _p(r.get("Entrada", ""), centro=True),
             _p(r.get("Salida", ""),  centro=True),
@@ -448,13 +627,17 @@ def generar_pdf_raquel(df, f_desde=None, f_hasta=None) -> bytes:
     col_widths_base = [
         22 * mm,   # Propietario
         25 * mm,   # Fuente
-        42 * mm,   # Cliente
-        42 * mm,   # Apartamento
+        38 * mm,   # Cliente
+    ]
+    if incluir_telefono:
+        col_widths_base.append(25 * mm)   # Teléfono
+    col_widths_base.extend([
+        40 * mm,   # Apartamento
         18 * mm,   # Entrada
         18 * mm,   # Salida
-        28 * mm,   # Personas
-        53 * mm,   # Peticiones
-    ]
+        25 * mm,   # Personas
+        50 * mm,   # Peticiones
+    ])
     if incluir_estado:
         col_widths = [25 * mm] + col_widths_base
     else:
@@ -521,6 +704,42 @@ def es_cancelada(estado_str: str) -> bool:
     """True si el estado indica que la reserva está cancelada o es un no-show."""
     t = str(estado_str).lower().strip()
     return any(x in t for x in _ESTADOS_CANCELADOS)
+
+def _extraer_telefono(texto: str) -> tuple[str, str]:
+    """Detecta un número de teléfono dentro de un texto (típico en los
+    comentarios de Booking) y lo separa. Devuelve (telefono, texto_limpio).
+
+    Reconoce variantes con prefijo (Tel/Teléfono/Phone/Tlf/Móvil/Mobile/…)
+    y también números internacionales sueltos con prefijo +. Si no encuentra
+    nada, devuelve ("", texto) sin tocar la cadena.
+    """
+    if not texto:
+        return "", texto or ""
+    t = str(texto)
+    patrones = [
+        # "Teléfono: +34 612 345 678" / "Tel - 612345678" / "Phone 612 345 678"
+        r'(?:tel(?:[eé]fono)?|phone|tlf|m[oó]vil|celular|mobile|whatsapp|wa)\s*[:\-]?\s*(\+?\s*\d(?:[\d\s\-\.\(\)]{6,}\d))',
+        # Número internacional suelto "+34 612 345 678"
+        r'(\+\s*\d{1,3}(?:[\s\-\.\(\)]*\d){6,})',
+        # Número español típico de 9 dígitos contiguos, opcional con separadores
+        r'(?<!\d)(\d{3}[\s\-\.]?\d{3}[\s\-\.]?\d{3})(?!\d)',
+    ]
+    for pat in patrones:
+        m = re.search(pat, t, re.IGNORECASE)
+        if m:
+            raw = m.group(1)
+            # Normalizar: dejar dígitos, espacios y +
+            telefono = re.sub(r'[^\d\+]', ' ', raw)
+            telefono = re.sub(r'\s+', ' ', telefono).strip()
+            if len(re.sub(r'\D', '', telefono)) < 7:
+                continue  # demasiado corto, no es teléfono
+            # Quitar la coincidencia completa del texto original
+            limpio = t[:m.start()] + t[m.end():]
+            # Recortar restos del tipo "Teléfono:" sin número o separadores
+            limpio = re.sub(r'(?i)\b(?:tel(?:[eé]fono)?|phone|tlf|m[oó]vil|celular|mobile|whatsapp|wa)\s*[:\-]?\s*', '', limpio)
+            limpio = re.sub(r'\n{2,}', '\n', limpio).strip(' ,;.\n\t-')
+            return telefono, limpio
+    return "", t
 
 def clasificar_dormitorios(tipo_unidad_str: str) -> str:
     """
@@ -977,7 +1196,7 @@ def cargar_reservas() -> pd.DataFrame:
 # Campos "opcionales": columnas que pueden no existir aún en la BD
 # (introducidas en migraciones posteriores). Si la inserción/actualización
 # falla porque la BD aún no tiene la columna, se reintenta sin esos campos.
-_CAMPOS_OPCIONALES_BD = ("adultos", "ninos", "forma_pago", "updated_at")
+_CAMPOS_OPCIONALES_BD = ("adultos", "ninos", "forma_pago", "updated_at", "telefono")
 
 def _payload_sin_opcionales(datos: dict) -> dict:
     return {k: v for k, v in datos.items() if k not in _CAMPOS_OPCIONALES_BD}
@@ -1645,7 +1864,13 @@ elif seccion == "➕ Nueva reserva":
                 index=(entrada.month - 1) if entrada else 0,
             )
         with c2:
-            personas    = st.text_input("Nº personas")
+            sub_a, sub_n = st.columns(2)
+            with sub_a:
+                adultos = st.number_input("Adultos", min_value=0, value=1, step=1)
+            with sub_n:
+                ninos   = st.number_input("Niños", min_value=0, value=0, step=1)
+            personas    = str(adultos + ninos)
+            telefono    = st.text_input("Teléfono de contacto")
             precio      = st.text_input("Precio (€)")
             estado_pago = st.selectbox("Estado de pago", ESTADOS)
             forma_pago  = st.selectbox(
@@ -1700,6 +1925,9 @@ elif seccion == "➕ Nueva reserva":
                 "salida":      salida_str,
                 "noches":      noches,
                 "personas":    personas,
+                "adultos":     adultos,
+                "ninos":       ninos,
+                "telefono":    telefono,
                 "precio":      precio,
                 "pago_cta":    pago_cta,
                 "fecha_ingreso": fecha_ing,
@@ -1753,7 +1981,16 @@ elif seccion == "✏️ Editar reserva":
             with c2:
                 entrada     = st.date_input("Fecha entrada", value=parse_date(reserva.get("entrada")), format="DD/MM/YYYY")
                 salida      = st.date_input("Fecha salida",  value=parse_date(reserva.get("salida")),  format="DD/MM/YYYY")
-                personas    = st.text_input("Nº personas", value=str(reserva.get("personas","")))
+                sub_a, sub_n = st.columns(2)
+                with sub_a:
+                    adultos = st.number_input("Adultos", min_value=0,
+                                              value=int(reserva.get("adultos") or 0), step=1)
+                with sub_n:
+                    ninos   = st.number_input("Niños", min_value=0,
+                                              value=int(reserva.get("ninos") or 0), step=1)
+                personas    = str(adultos + ninos)
+                telefono    = st.text_input("Teléfono de contacto",
+                                            value=str(reserva.get("telefono", "") or ""))
                 precio      = st.text_input("Precio (€)",  value=str(reserva.get("precio","")))
                 est_val     = str(reserva.get("estado_pago",""))
                 estado_pago = st.selectbox("Estado de pago", ESTADOS, index=ESTADOS.index(est_val) if est_val in ESTADOS else 0)
@@ -1787,7 +2024,8 @@ elif seccion == "✏️ Editar reserva":
                 "nro_reserva": nro_reserva, "fuente": fuente, "mes": mes,
                 "mes_num": mes_num(mes), "nombre": nombre, "apartamento": apartamento,
                 "dormitorios": dormitorios, "entrada": entrada_str, "salida": salida_str,
-                "noches": noches, "personas": personas, "precio": precio,
+                "noches": noches, "personas": personas, "adultos": adultos, "ninos": ninos,
+                "telefono": telefono, "precio": precio,
                 "pago_cta": pago_cta, "fecha_ingreso": fecha_ing, "resto_pdte": resto_pdte,
                 "estado_pago": estado_pago, "forma_pago": forma_pago,
                 "comentarios": comentarios,
@@ -2173,6 +2411,45 @@ elif seccion == "📅 Plantilla mensual":
     primer_dia = date(anio_sel, mes_n, 1).weekday()   # 0=Lunes
     DIAS_SEM   = ["L","M","X","J","V","S","D"]
 
+    # ── Aviso: reservas sin apartamento que solapan con este mes ───────
+    # Detecta reservas en BD con apartamento vacío que afectan al mes
+    # seleccionado (entrada/salida solapan con [día 1, último día]). Estas
+    # reservas no son visibles en el calendario y deben asignarse a mano
+    # desde "✏️ Editar reserva".
+    if not df.empty:
+        primer_dia_mes = date(anio_sel, mes_n, 1)
+        ultimo_dia_mes = date(anio_sel, mes_n, n_dias)
+        filas_sin_apto = []
+        for _, r in df.iterrows():
+            if es_cancelada(r.get("estado_pago", "")):
+                continue
+            apto_r = str(r.get("apartamento", "") or "").strip()
+            if apto_r:
+                continue
+            e = parse_date_safe(r.get("entrada", ""))
+            s = parse_date_safe(r.get("salida", ""))
+            if not e or not s:
+                continue
+            if e <= ultimo_dia_mes and s > primer_dia_mes:
+                filas_sin_apto.append({
+                    "id":          r.get("id"),
+                    "Nº reserva":  r.get("nro_reserva", ""),
+                    "Cliente":     r.get("nombre", ""),
+                    "Fuente":      r.get("fuente", ""),
+                    "Tipo":        r.get("dormitorios", ""),
+                    "Entrada":     r.get("entrada", ""),
+                    "Salida":      r.get("salida", ""),
+                })
+        if filas_sin_apto:
+            st.warning(
+                f"⚠️ **{len(filas_sin_apto)} reserva(s) sin apartamento asignado** "
+                f"afectan a este mes y no se muestran en el calendario. "
+                f"Asígnales un apartamento desde **✏️ Editar reserva** para que "
+                f"aparezcan."
+            )
+            df_sin_apto = pd.DataFrame(filas_sin_apto).drop(columns=["id"])
+            st.dataframe(df_sin_apto, use_container_width=True, hide_index=True)
+
     # ── Construir grid, salida_map y reverse_map ──────────
     grid       = {apto: {d: None for d in dias} for apto in APTOS}
     salida_map = {}   # (apto, día) → datos del cliente que SALE ese día
@@ -2424,7 +2701,8 @@ elif seccion == "📅 Plantilla mensual":
         """, unsafe_allow_html=True)
         st.markdown(html, unsafe_allow_html=True)
 
-        # ── Descargar el calendario como PDF ──
+        # ── Descargar el calendario (PDF + Excel) ──────────────
+        col_dl_pdf, col_dl_xls = st.columns(2)
         if _PDF_OK:
             pdf_cal_bytes = generar_pdf_plantilla(
                 grid=grid,
@@ -2436,13 +2714,35 @@ elif seccion == "📅 Plantilla mensual":
                 juanma_set=APTOS_JUANMA,
                 salida_map=salida_map,
             )
+            with col_dl_pdf:
+                st.download_button(
+                    "📄 Descargar PDF (imprimir)",
+                    data=pdf_cal_bytes,
+                    file_name=f"Calendario_{mes_sel}_{anio_sel}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                    key="cal_pdf_download",
+                )
+
+        xlsx_cal_bytes = generar_excel_plantilla(
+            grid=grid,
+            aptos=APTOS,
+            n_dias=n_dias,
+            mes_str=mes_sel,
+            anio=anio_sel,
+            primer_dia=primer_dia,
+            juanma_set=APTOS_JUANMA,
+            salida_map=salida_map,
+        )
+        with col_dl_xls:
             st.download_button(
-                "📄 Descargar calendario en PDF (imprimir)",
-                data=pdf_cal_bytes,
-                file_name=f"Calendario_{mes_sel}_{anio_sel}.pdf",
-                mime="application/pdf",
+                "📊 Descargar Excel del mes",
+                data=xlsx_cal_bytes,
+                file_name=f"Calendario_{mes_sel}_{anio_sel}.xlsx",
+                mime=("application/vnd.openxmlformats-officedocument."
+                      "spreadsheetml.sheet"),
                 use_container_width=True,
-                key="cal_pdf_download",
+                key="cal_xlsx_download",
             )
 
         # ── Panel consultar / editar individual ──
@@ -2775,6 +3075,8 @@ elif seccion == "📥 Importar Booking":
                 "fecha_cancel":  ["Fecha de cancelación", "Fecha de cancelacion",
                                   "Cancellation date"],
                 "comentarios":   ["Comentarios"],
+                "telefono":      ["Teléfono", "Telefono", "Phone", "Phone number",
+                                  "Número de teléfono", "Numero de telefono"],
                 "tipo_unidad":   ["Tipo de unidad", "Tipo de habitación", "Room type",
                                   "Tipo de alojamiento"],
             }
@@ -2824,9 +3126,13 @@ elif seccion == "📥 Importar Booking":
                     df["apartamento"].notna() &
                     (df["apartamento"].astype(str).str.strip() != "")
                 )
-                df_asignados = df[_mask_valid][["apartamento","entrada","salida"]].copy()
+                _cols_asig = [c for c in ["apartamento","entrada","salida","estado_pago"]
+                              if c in df.columns]
+                df_asignados = df[_mask_valid][_cols_asig].copy()
+                if "estado_pago" not in df_asignados.columns:
+                    df_asignados["estado_pago"] = ""
             else:
-                df_asignados = pd.DataFrame(columns=["apartamento","entrada","salida"])
+                df_asignados = pd.DataFrame(columns=["apartamento","entrada","salida","estado_pago"])
 
             for _, row in bk.iterrows():
                 def g(key):
@@ -2933,6 +3239,14 @@ elif seccion == "📥 Importar Booking":
                 adultos_total = _int_safe(g("adultos"))
                 ninos_total   = _int_safe(g("ninos"))
 
+                # Teléfono: priorizar columna dedicada; si no, extraer del texto
+                # de comentarios (Booking suele meterlo ahí). Si se extrae,
+                # limpiar el texto de comentarios para que no se duplique.
+                telefono_raw = str(g("telefono") or "").strip()
+                comentarios_raw = str(g("comentarios")) if g("comentarios") else ""
+                if not telefono_raw:
+                    telefono_raw, comentarios_raw = _extraer_telefono(comentarios_raw)
+
                 base = {
                     "nro_reserva": nro,
                     "fuente":      "BOOKING.COM",
@@ -2943,7 +3257,8 @@ elif seccion == "📥 Importar Booking":
                     "salida":      salida_str,
                     "noches":      noches_val,
                     "estado_pago": estado_val,
-                    "comentarios": str(g("comentarios")) if g("comentarios") else "",
+                    "telefono":    telefono_raw,
+                    "comentarios": comentarios_raw,
                 }
 
                 # ── Una fila por habitación ─────────────────────────────────
@@ -3013,6 +3328,7 @@ elif seccion == "📥 Importar Booking":
                             "apartamento": apto_i,
                             "entrada":     entrada_str,
                             "salida":      salida_str,
+                            "estado_pago": "",
                         }])
                         df_asignados = pd.concat([df_asignados, nuevo_reg], ignore_index=True)
 
@@ -3091,6 +3407,44 @@ elif seccion == "📥 Importar Booking":
                     if stored in nros_cancel or base in nros_cancel:
                         canceladas_en_bd.append(r)
 
+            # ── Reservas ya en BD que están sin apartamento asignado ────────
+            # Cuando una importación anterior no pudo asignar apto (ej. todos
+            # ocupados por una cancelada que bloqueaba) y se importó igualmente,
+            # la reserva quedó invisible en la plantilla mensual. Aquí
+            # ofrecemos reasignar usando la asignación automática actual
+            # (que ya descarta canceladas, gracias al fix de df_asignados).
+            reasignables = []
+            if not ya_exist.empty and not df.empty:
+                df_idx_re = df.set_index(df["nro_reserva"].astype(str))
+                for _, fila_nueva in ya_exist.iterrows():
+                    nro_e = str(fila_nueva["nro_reserva"])
+                    if nro_e not in df_idx_re.index:
+                        continue
+                    fila_bd = df_idx_re.loc[nro_e]
+                    if isinstance(fila_bd, pd.DataFrame):
+                        fila_bd = fila_bd.iloc[0]
+                    apto_bd = str(fila_bd.get("apartamento", "") or "").strip()
+                    if apto_bd:
+                        continue
+                    tipo_dorm = str(fila_bd.get("dormitorios", "")
+                                    or fila_nueva.get("dormitorios", "") or "1")
+                    f_e = parse_date_safe(fila_bd.get("entrada", ""))
+                    f_s = parse_date_safe(fila_bd.get("salida", ""))
+                    libres = (asignar_aptos_auto(tipo_dorm, f_e, f_s, 1, df_asignados)
+                              if f_e and f_s else [])
+                    sugerido = libres[0] if libres else ""
+                    reasignables.append({
+                        "id":          int(fila_bd["id"]),
+                        "nro_reserva": nro_e,
+                        "nombre":      str(fila_bd.get("nombre", "") or ""),
+                        "tipo_dorm":   tipo_dorm,
+                        "entrada":     str(fila_bd.get("entrada", "") or ""),
+                        "salida":      str(fila_bd.get("salida", "") or ""),
+                        "sugerido":    sugerido,
+                        "f_e":         f_e,
+                        "f_s":         f_s,
+                    })
+
             # ── Resumen métricas ────────────────────────────────────────────
             col_r1, col_r2, col_r3, col_r4, col_r5 = st.columns(5)
             col_r1.metric("Válidas en el archivo",     len(df_bk))
@@ -3165,6 +3519,81 @@ elif seccion == "📥 Importar Booking":
                     f"ℹ️ {len(canceladas_excel)} reserva(s) cancelada(s) en el archivo "
                     f"— ninguna estaba guardada en la aplicación."
                 )
+
+            # ── Panel: reservas ya en BD que están sin apartamento ─────────
+            if reasignables:
+                st.markdown("---")
+                st.warning(
+                    f"📍 **{len(reasignables)} reserva(s)** ya guardadas en la "
+                    f"aplicación están **sin apartamento asignado** y no aparecen "
+                    f"en la plantilla mensual. Puedes asignarles uno desde aquí."
+                )
+                df_reasig = pd.DataFrame([{
+                    "Apartamento": r["sugerido"],
+                    "Nº Reserva":  r["nro_reserva"],
+                    "Cliente":     r["nombre"],
+                    "Tipo":        r["tipo_dorm"],
+                    "Entrada":     r["entrada"],
+                    "Salida":      r["salida"],
+                } for r in reasignables])
+                edited_reasig = st.data_editor(
+                    df_reasig,
+                    use_container_width=True,
+                    hide_index=True,
+                    height=min(60 + 35 * len(df_reasig), 360),
+                    column_config={
+                        "Apartamento": st.column_config.SelectboxColumn(
+                            "Apartamento ✏️", options=[""] + APTOS, width=185,
+                        ),
+                        "Nº Reserva": st.column_config.TextColumn(width=130, disabled=True),
+                        "Cliente":    st.column_config.TextColumn(width=190, disabled=True),
+                        "Tipo":       st.column_config.TextColumn(width=70,  disabled=True),
+                        "Entrada":    st.column_config.TextColumn(width=90,  disabled=True),
+                        "Salida":     st.column_config.TextColumn(width=90,  disabled=True),
+                    },
+                    num_rows="fixed",
+                    key="reasig_editor",
+                )
+                if st.button(
+                    f"📍 Asignar apartamento a {len(reasignables)} reserva(s)",
+                    type="primary", use_container_width=True, key="btn_reasig",
+                ):
+                    df_fresh_re = cargar_reservas()
+                    aplicados_re = 0
+                    errores_re   = []
+                    conflictos_re = []
+                    for i, r in enumerate(reasignables):
+                        apto_sel = str(edited_reasig.iloc[i]["Apartamento"] or "").strip()
+                        if not apto_sel:
+                            continue
+                        if r["f_e"] and r["f_s"]:
+                            if not apto_libre(apto_sel, r["f_e"], r["f_s"], df_fresh_re):
+                                conflictos_re.append(
+                                    f"**{apto_sel}** · {r['entrada']} → {r['salida']} "
+                                    f"({r['nombre']})"
+                                )
+                                continue
+                        try:
+                            actualizar_reserva(r["id"], {"apartamento": apto_sel})
+                            aplicados_re += 1
+                            df_fresh_re = pd.concat([df_fresh_re, pd.DataFrame([{
+                                "apartamento": apto_sel,
+                                "entrada":     r["entrada"],
+                                "salida":      r["salida"],
+                                "estado_pago": "",
+                            }])], ignore_index=True)
+                        except Exception as ex:
+                            errores_re.append(f"{r['nro_reserva']}: {ex}")
+                    if conflictos_re:
+                        st.error(
+                            f"⛔ {len(conflictos_re)} conflicto(s) de disponibilidad:\n\n"
+                            + "\n\n".join(f"- {c}" for c in conflictos_re)
+                        )
+                    if aplicados_re:
+                        st.success(f"✅ {aplicados_re} reserva(s) reasignadas.")
+                        st.rerun()
+                    for err in errores_re:
+                        st.error(f"Error al reasignar: {err}")
 
             # ── Panel de reservas existentes con cambios ────────────────────
             if updates_plan:
@@ -3506,6 +3935,12 @@ elif seccion == "📋 Listado Raquel":
                 adultos_total  = _max_int(grupo, "adultos")
                 ninos_total    = _max_int(grupo, "ninos")
                 peticiones_raw = primera.get("comentarios", "") or ""
+                telefono_val   = str(primera.get("telefono", "") or "").strip()
+                # Fallback para reservas antiguas: si no hay teléfono en BD
+                # pero está metido en comentarios, lo extraemos en vivo y
+                # mostramos las peticiones sin él.
+                if not telefono_val:
+                    telefono_val, peticiones_raw = _extraer_telefono(peticiones_raw)
                 peticiones_es  = traducir_a_espanol(peticiones_raw)
 
                 filas_raquel.append({
@@ -3513,6 +3948,7 @@ elif seccion == "📋 Listado Raquel":
                     "Propietario": _propietario_grupo(grupo),
                     "Fuente":      primera.get("fuente", "") or "",
                     "Cliente":     primera.get("nombre", "") or "",
+                    "Teléfono":    telefono_val,
                     "Apartamento": apto_str,
                     "Entrada":     primera.get("entrada", "") or "",
                     "Salida":      primera.get("salida", "") or "",
@@ -3535,19 +3971,20 @@ elif seccion == "📋 Listado Raquel":
             use_container_width=True,
             hide_index=True,
             height=min(80 + 35 * len(df_raquel), 700),
-            disabled=["Estado", "Propietario", "Fuente", "Cliente",
+            disabled=["Estado", "Propietario", "Fuente", "Cliente", "Teléfono",
                       "Apartamento", "Entrada", "Salida", "Personas"],
             column_config={
                 "Estado":      st.column_config.TextColumn(width=130),
                 "Propietario": st.column_config.TextColumn(width=110),
                 "Fuente":      st.column_config.TextColumn(width=120),
                 "Cliente":     st.column_config.TextColumn(width=200),
+                "Teléfono":    st.column_config.TextColumn(width=120),
                 "Apartamento": st.column_config.TextColumn(width=210),
                 "Entrada":     st.column_config.TextColumn(width=95),
                 "Salida":      st.column_config.TextColumn(width=95),
                 "Personas":    st.column_config.TextColumn(width=160),
                 "Peticiones":  st.column_config.TextColumn(
-                    "Peticiones ✏️", width=380,
+                    "Peticiones ✏️", width=340,
                 ),
             },
             num_rows="fixed",

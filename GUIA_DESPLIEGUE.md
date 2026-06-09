@@ -275,6 +275,22 @@ en blanco.
 
 ---
 
+## PASO 7.3 · Habilitar el campo "Teléfono" en Listado Raquel (opcional)
+
+En los formularios de Nueva/Editar reserva aparece un campo "Teléfono de
+contacto". Para que el valor se guarde y se muestre en el Listado Raquel y su
+PDF, añade la columna:
+
+```sql
+ALTER TABLE reservas ADD COLUMN IF NOT EXISTS telefono TEXT;
+NOTIFY pgrst, 'reload schema';
+```
+
+Sin este paso, el campo aparece pero el valor no se persistirá (la app
+detecta que la columna no existe y guarda el resto de campos sin error).
+
+---
+
 ## PASO 7.1 · Habilitar el campo "Forma de pago" (opcional)
 
 En el formulario de **Nueva reserva** y **Editar reserva** hay un desplegable
