@@ -3922,6 +3922,7 @@ elif seccion == "📋 Listado Raquel":
         filas_raquel = []
         nro_bases    = []                      # para mapear filas → reservas en BD
         peticiones_orig = []                   # texto traducido inicial (para detectar cambios)
+        telefonos_orig  = []                   # teléfono mostrado inicial (para detectar cambios)
         with st.spinner("Preparando listado y traduciendo comentarios al español…"):
             for nro_base, grupo in df_r.groupby("_nro_base", sort=False):
                 primera = grupo.iloc[0]
@@ -3957,13 +3958,15 @@ elif seccion == "📋 Listado Raquel":
                 })
                 nro_bases.append(nro_base)
                 peticiones_orig.append(peticiones_es)
+                telefonos_orig.append(telefono_val)
 
         df_raquel = pd.DataFrame(filas_raquel)
 
         st.markdown(f"**{len(df_raquel)} reserva(s)**")
         st.caption(
-            "✏️ La columna **Peticiones** es editable: doble clic en cualquier celda "
-            "para añadir o cambiar notas para Raquel. Luego pulsa **Guardar peticiones**."
+            "✏️ Las columnas **Teléfono** y **Peticiones** son editables: doble clic "
+            "en cualquier celda para añadir o cambiar el dato. Luego pulsa "
+            "**Guardar cambios**."
         )
 
         edited_raquel = st.data_editor(
@@ -3971,20 +3974,22 @@ elif seccion == "📋 Listado Raquel":
             use_container_width=True,
             hide_index=True,
             height=min(80 + 35 * len(df_raquel), 700),
-            disabled=["Estado", "Propietario", "Fuente", "Cliente", "Teléfono",
+            disabled=["Estado", "Propietario", "Fuente", "Cliente",
                       "Apartamento", "Entrada", "Salida", "Personas"],
             column_config={
                 "Estado":      st.column_config.TextColumn(width=130),
                 "Propietario": st.column_config.TextColumn(width=110),
                 "Fuente":      st.column_config.TextColumn(width=120),
                 "Cliente":     st.column_config.TextColumn(width=200),
-                "Teléfono":    st.column_config.TextColumn(width=120),
+                "Teléfono":    st.column_config.TextColumn(
+                    "Teléfono ✏️", width=130,
+                ),
                 "Apartamento": st.column_config.TextColumn(width=210),
                 "Entrada":     st.column_config.TextColumn(width=95),
                 "Salida":      st.column_config.TextColumn(width=95),
                 "Personas":    st.column_config.TextColumn(width=160),
                 "Peticiones":  st.column_config.TextColumn(
-                    "Peticiones ✏️", width=340,
+                    "Peticiones ✏️", width=320,
                 ),
             },
             num_rows="fixed",
@@ -3993,16 +3998,25 @@ elif seccion == "📋 Listado Raquel":
 
         col_save, col_dl_csv, col_dl_pdf = st.columns([1, 1, 1])
         with col_save:
-            if st.button("💾 Guardar peticiones",
+            if st.button("💾 Guardar cambios",
                          type="primary", use_container_width=True,
                          key="raquel_save"):
                 cambios = 0
                 errores = []
                 for i in range(len(edited_raquel)):
-                    nuevo = str(edited_raquel.iloc[i]["Peticiones"] or "")
-                    antiguo = str(peticiones_orig[i] or "")
-                    if nuevo == antiguo:
+                    nuevo_pet = str(edited_raquel.iloc[i]["Peticiones"] or "")
+                    antiguo_pet = str(peticiones_orig[i] or "")
+                    nuevo_tel = str(edited_raquel.iloc[i].get("Teléfono", "") or "").strip()
+                    antiguo_tel = str(telefonos_orig[i] or "").strip()
+                    cambio_pet = (nuevo_pet != antiguo_pet)
+                    cambio_tel = (nuevo_tel != antiguo_tel)
+                    if not cambio_pet and not cambio_tel:
                         continue
+                    payload = {}
+                    if cambio_pet:
+                        payload["comentarios"] = nuevo_pet
+                    if cambio_tel:
+                        payload["telefono"] = nuevo_tel
                     nro_base = nro_bases[i]
                     # Localizar TODAS las filas (multi-apto) que comparten ese nº base.
                     # Para reservas sin Nº la clave es "__id_<id>": solo afecta esa fila.
@@ -4019,7 +4033,7 @@ elif seccion == "📋 Listado Raquel":
                         reservas_grupo = df_base[bases == nro_base]
                     for _, r in reservas_grupo.iterrows():
                         try:
-                            actualizar_reserva(int(r["id"]), {"comentarios": nuevo})
+                            actualizar_reserva(int(r["id"]), payload)
                             cambios += 1
                         except Exception as ex:
                             errores.append(f"{r.get('nro_reserva','?')}: {ex}")
