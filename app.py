@@ -705,6 +705,70 @@ def es_cancelada(estado_str: str) -> bool:
     t = str(estado_str).lower().strip()
     return any(x in t for x in _ESTADOS_CANCELADOS)
 
+def _formatear_telefono(raw: str) -> str:
+    """Devuelve el numero formateado de forma legible:
+      34655462650        -> +34 655 462 650
+      351938810833       -> +351 938 810 833
+      0034 612 345 678   -> +34 612 345 678
+      +34646 49 21 15    -> +34 646 492 115
+      67088679           -> 670 886 79
+      646003298          -> 646 003 298
+    Si no consigue clasificar, devuelve el numero solo con los grupos de
+    3 separados por espacio.
+    """
+    if not raw:
+        return ""
+    s = str(raw).strip()
+    tiene_plus = s.lstrip().startswith("+")
+    digits = re.sub(r"\D", "", s)
+    if not digits:
+        return s
+    # Normalizar prefijo internacional: si empieza por 00, sustituir por +
+    if digits.startswith("00"):
+        digits = digits[2:]
+        tiene_plus = True
+    # Detectar prefijos de pais conocidos comunes en Booking
+    # (extendible). Si el numero tiene mas de 9 digitos y empieza por
+    # uno de estos prefijos, asumimos que ese es el codigo de pais.
+    prefijos_pais = {
+        "34":  9,  # Espana, 9 digitos locales
+        "351": 9,  # Portugal, 9 digitos locales
+        "33":  9,  # Francia
+        "44": 10,  # Reino Unido
+        "49": 10,  # Alemania (aproximado)
+        "39": 10,  # Italia (aproximado)
+        "31":  9,  # Paises Bajos
+        "32":  9,  # Belgica
+        "353": 9,  # Irlanda
+        "1":  10,  # USA/Canada
+    }
+    pais = ""
+    local = digits
+    for p, _len_loc in sorted(prefijos_pais.items(), key=lambda x: -len(x[0])):
+        if digits.startswith(p) and len(digits) > 9 and (len(digits) - len(p)) >= 6:
+            pais = p
+            local = digits[len(p):]
+            break
+    # Si tenia + explicito y no detectamos un pais conocido, tratamos los
+    # primeros 1-3 digitos como pais.
+    if not pais and tiene_plus and len(digits) > 9:
+        # 3 digitos por defecto si encaja
+        for n in (3, 2, 1):
+            if len(digits) - n >= 6:
+                pais = digits[:n]
+                local = digits[n:]
+                break
+    # Agrupar la parte local en bloques de 3
+    grupos = []
+    rest = local
+    while rest:
+        grupos.append(rest[:3])
+        rest = rest[3:]
+    local_fmt = " ".join(grupos)
+    if pais:
+        return f"+{pais} {local_fmt}".strip()
+    return local_fmt
+
 def _extraer_telefono(texto: str) -> tuple[str, str]:
     """Detecta un número de teléfono dentro de un texto (típico en los
     comentarios de Booking) y lo separa. Devuelve (telefono, texto_limpio).
@@ -757,7 +821,7 @@ def _extraer_telefono(texto: str) -> tuple[str, str]:
                 '', limpio,
             )
             limpio = re.sub(r'\n{2,}', '\n', limpio).strip(' ,;.\n\t-()')
-            return telefono, limpio
+            return _formatear_telefono(telefono), limpio
     return "", t
 
 def clasificar_dormitorios(tipo_unidad_str: str) -> str:
