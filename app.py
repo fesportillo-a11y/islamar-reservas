@@ -2550,6 +2550,7 @@ elif seccion == "📅 Plantilla mensual":
             )
             df_sin_apto = pd.DataFrame([{
                 "Apartamento": r["sugerido"],
+                "🗑️":          False,
                 "Nº reserva":  r["Nº reserva"],
                 "Cliente":     r["Cliente"],
                 "Fuente":      r["Fuente"],
@@ -2566,6 +2567,10 @@ elif seccion == "📅 Plantilla mensual":
                     "Apartamento": st.column_config.SelectboxColumn(
                         "Apartamento ✏️", options=[""] + APTOS, width=185,
                     ),
+                    "🗑️": st.column_config.CheckboxColumn(
+                        "🗑️ Borrar", width=80,
+                        help="Marca para eliminar esta reserva en lugar de asignarle apartamento.",
+                    ),
                     "Nº reserva": st.column_config.TextColumn(width=130, disabled=True),
                     "Cliente":    st.column_config.TextColumn(width=190, disabled=True),
                     "Fuente":     st.column_config.TextColumn(width=110, disabled=True),
@@ -2576,16 +2581,39 @@ elif seccion == "📅 Plantilla mensual":
                 num_rows="fixed",
                 key="pm_sin_apto_editor",
             )
-            if st.button(
-                f"📍 Asignar apartamento a {len(filas_sin_apto)} reserva(s)",
-                type="primary", use_container_width=True,
-                key="pm_btn_asignar_sin_apto",
-            ):
+
+            # Contar marcadas para etiquetar los botones
+            try:
+                _n_marcadas = int(edited_sin_apto["🗑️"].sum())
+            except Exception:
+                _n_marcadas = 0
+            _n_asignar = len(filas_sin_apto) - _n_marcadas
+
+            col_btn_asig, col_btn_del = st.columns(2)
+            with col_btn_asig:
+                btn_asignar = st.button(
+                    f"📍 Asignar apartamento a {_n_asignar} reserva(s)",
+                    type="primary", use_container_width=True,
+                    key="pm_btn_asignar_sin_apto",
+                    disabled=(_n_asignar == 0),
+                )
+            with col_btn_del:
+                btn_borrar = st.button(
+                    f"🗑️ Eliminar {_n_marcadas} marcada(s)",
+                    use_container_width=True,
+                    key="pm_btn_borrar_sin_apto",
+                    disabled=(_n_marcadas == 0),
+                )
+
+            if btn_asignar:
                 df_fresh_pm = cargar_reservas()
                 aplicados_pm = 0
                 errores_pm   = []
                 conflictos_pm = []
                 for i, r in enumerate(filas_sin_apto):
+                    # Si la fila esta marcada para borrar, no asignar
+                    if bool(edited_sin_apto.iloc[i]["🗑️"]):
+                        continue
                     apto_sel = str(edited_sin_apto.iloc[i]["Apartamento"] or "").strip()
                     if not apto_sel:
                         continue
@@ -2617,6 +2645,54 @@ elif seccion == "📅 Plantilla mensual":
                     st.rerun()
                 for err in errores_pm:
                     st.error(f"Error al asignar: {err}")
+
+            if btn_borrar:
+                # Confirmacion en dos pasos para evitar borrados accidentales
+                ids_a_borrar = [
+                    filas_sin_apto[i]["id"]
+                    for i in range(len(filas_sin_apto))
+                    if bool(edited_sin_apto.iloc[i]["🗑️"])
+                ]
+                if not st.session_state.get("pm_confirm_borrar", False):
+                    st.session_state["pm_confirm_borrar"] = True
+                    st.session_state["pm_ids_borrar"]    = ids_a_borrar
+                    st.warning(
+                        f"⚠️ Vas a eliminar **{len(ids_a_borrar)} reserva(s)** "
+                        f"de forma definitiva. Pulsa de nuevo **🗑️ Eliminar** "
+                        f"para confirmar."
+                    )
+                    st.rerun()
+            if (st.session_state.get("pm_confirm_borrar", False)
+                    and not btn_borrar
+                    and not btn_asignar):
+                # Mostrar boton de confirmacion explicita
+                if st.button(
+                    f"✅ Sí, eliminar definitivamente "
+                    f"{len(st.session_state.get('pm_ids_borrar', []))} reserva(s)",
+                    type="primary", use_container_width=True,
+                    key="pm_btn_borrar_confirm",
+                ):
+                    borrados = 0
+                    errores_b = []
+                    for rid in st.session_state.get("pm_ids_borrar", []):
+                        try:
+                            eliminar_reserva(int(rid))
+                            borrados += 1
+                        except Exception as ex:
+                            errores_b.append(f"{rid}: {ex}")
+                    st.session_state["pm_confirm_borrar"] = False
+                    st.session_state["pm_ids_borrar"]    = []
+                    if borrados:
+                        st.success(f"🗑️ {borrados} reserva(s) eliminada(s).")
+                        st.cache_resource.clear()
+                        st.rerun()
+                    for err in errores_b:
+                        st.error(f"Error al eliminar: {err}")
+                if st.button("Cancelar borrado", key="pm_btn_borrar_cancel",
+                             use_container_width=True):
+                    st.session_state["pm_confirm_borrar"] = False
+                    st.session_state["pm_ids_borrar"]    = []
+                    st.rerun()
 
     # ── Construir grid, salida_map y reverse_map ──────────
     grid       = {apto: {d: None for d in dias} for apto in APTOS}
