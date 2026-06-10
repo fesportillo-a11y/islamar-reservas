@@ -1931,6 +1931,11 @@ elif seccion == "➕ Nueva reserva":
         with c1:
             fuente      = st.selectbox("Fuente *", FUENTES)
             nombre      = st.text_input("Nombre del cliente *")
+            telefono    = st.text_input(
+                "📞 Teléfono de contacto",
+                placeholder="Ej. +34 600 000 000",
+                help="Teléfono del cliente (se mostrará en el Listado Raquel).",
+            )
             nro_reserva = st.text_input("Nº de reserva")
             apartamento = st.selectbox(
                 "Apartamento * (solo libres en esas fechas)",
@@ -1953,7 +1958,6 @@ elif seccion == "➕ Nueva reserva":
             with sub_n:
                 ninos   = st.number_input("Niños", min_value=0, value=0, step=1)
             personas    = str(adultos + ninos)
-            telefono    = st.text_input("Teléfono de contacto")
             precio      = st.text_input("Precio (€)")
             estado_pago = st.selectbox("Estado de pago", ESTADOS)
             forma_pago  = st.selectbox(
@@ -2050,9 +2054,20 @@ elif seccion == "✏️ Editar reserva":
 
         with st.form("form_editar"):
             c1, c2 = st.columns(2)
+            _tel_edit = reserva.get("telefono", "")
+            if _tel_edit is None or (isinstance(_tel_edit, float) and pd.isna(_tel_edit)):
+                _tel_edit = ""
+            _tel_edit = str(_tel_edit).strip()
+            if _tel_edit.lower() == "nan":
+                _tel_edit = ""
             with c1:
                 fuente      = st.selectbox("Fuente", FUENTES, index=FUENTES.index(reserva["fuente"]) if reserva["fuente"] in FUENTES else 0)
                 nombre      = st.text_input("Nombre del cliente *", value=str(reserva.get("nombre","")))
+                telefono    = st.text_input(
+                    "📞 Teléfono de contacto", value=_tel_edit,
+                    placeholder="Ej. +34 600 000 000",
+                    help="Teléfono del cliente (se mostrará en el Listado Raquel).",
+                )
                 nro_reserva = st.text_input("Nº de reserva", value=str(reserva.get("nro_reserva","")))
                 apto_val    = str(reserva.get("apartamento",""))
                 apto_opts   = [""] + APTOS
@@ -2072,13 +2087,6 @@ elif seccion == "✏️ Editar reserva":
                     ninos   = st.number_input("Niños", min_value=0,
                                               value=int(reserva.get("ninos") or 0), step=1)
                 personas    = str(adultos + ninos)
-                _tel_edit = reserva.get("telefono", "")
-                if _tel_edit is None or (isinstance(_tel_edit, float) and pd.isna(_tel_edit)):
-                    _tel_edit = ""
-                _tel_edit = str(_tel_edit).strip()
-                if _tel_edit.lower() == "nan":
-                    _tel_edit = ""
-                telefono    = st.text_input("Teléfono de contacto", value=_tel_edit)
                 precio      = st.text_input("Precio (€)",  value=str(reserva.get("precio","")))
                 est_val     = str(reserva.get("estado_pago",""))
                 estado_pago = st.selectbox("Estado de pago", ESTADOS, index=ESTADOS.index(est_val) if est_val in ESTADOS else 0)
