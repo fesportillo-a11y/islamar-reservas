@@ -3181,7 +3181,13 @@ elif seccion == "📥 Importar Booking":
                                   "Cancellation date"],
                 "comentarios":   ["Comentarios"],
                 "telefono":      ["Teléfono", "Telefono", "Phone", "Phone number",
-                                  "Número de teléfono", "Numero de telefono"],
+                                  "Número de teléfono", "Numero de telefono",
+                                  "Móvil", "Movil", "Mobile", "Mobile phone",
+                                  "Móvil del huésped", "Movil del huesped",
+                                  "Teléfono móvil", "Telefono movil",
+                                  "Contact", "Contacto", "Teléfono de contacto",
+                                  "Telefono de contacto", "Customer phone",
+                                  "Datos de contacto", "Numero", "Número"],
                 "tipo_unidad":   ["Tipo de unidad", "Tipo de habitación", "Room type",
                                   "Tipo de alojamiento"],
             }
@@ -3198,6 +3204,27 @@ elif seccion == "📥 Importar Booking":
                         if op.lower() in c.lower():
                             return c
                 return None
+
+            # ── Diagnostico: que columnas del Excel reconocemos ─────────────
+            # Util para detectar cuando Booking nombra una columna de forma
+            # diferente y no la estamos capturando (especialmente telefono).
+            with st.expander("🔍 Diagnostico de columnas detectadas", expanded=False):
+                st.caption(
+                    "Esta tabla muestra a que campo de la BD se asocia cada "
+                    "columna del Excel de Booking. Si **Telefono** aparece "
+                    "como `(no encontrada)`, dime el nombre exacto de la "
+                    "columna y la añado al mapeo."
+                )
+                _diag = []
+                for k_bd, opciones in COL_MAP.items():
+                    col_match = get_col(bk, opciones)
+                    _diag.append({
+                        "Campo BD":       k_bd,
+                        "Columna Excel":  col_match or "(no encontrada)",
+                    })
+                st.dataframe(pd.DataFrame(_diag), use_container_width=True,
+                             hide_index=True)
+                st.caption("Columnas del Excel: " + ", ".join(map(str, bk.columns)))
 
             def limpiar_precio(v):
                 try:
@@ -3453,8 +3480,11 @@ elif seccion == "📥 Importar Booking":
             # Solo se comparan/actualizan las columnas "de Booking". Los campos manuales
             # (pago_cta, fecha_ingreso, resto_pdte, estado_pago, comentarios, apartamento)
             # se respetan SIEMPRE en la reserva existente.
+            # `telefono`, `adultos` y `ninos` vienen de Booking y conviene actualizarlos
+            # si faltaban (las reservas antiguas no los tenian).
             CAMPOS_UPDATE = ["nombre", "entrada", "salida", "noches", "personas",
-                             "precio", "dormitorios", "mes", "mes_num"]
+                             "precio", "dormitorios", "mes", "mes_num",
+                             "telefono", "adultos", "ninos"]
 
             def _norm(campo, v):
                 """Normaliza para comparar entre BD y nuevo import."""
