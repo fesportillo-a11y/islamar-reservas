@@ -709,35 +709,54 @@ def _extraer_telefono(texto: str) -> tuple[str, str]:
     """Detecta un número de teléfono dentro de un texto (típico en los
     comentarios de Booking) y lo separa. Devuelve (telefono, texto_limpio).
 
-    Reconoce variantes con prefijo (Tel/Teléfono/Phone/Tlf/Móvil/Mobile/…)
-    y también números internacionales sueltos con prefijo +. Si no encuentra
-    nada, devuelve ("", texto) sin tocar la cadena.
+    Cubre los formatos habituales de Booking:
+      - "Tel: +34 612 345 678" / "Teléfono 612345678" / "Phone 612 345 678"
+      - "+34 612 345 678" (internacional con +)
+      - "(+34) 612 345 678" (con paréntesis)
+      - "0034 612 345 678" (internacional sin +, formato antiguo)
+      - "34655462650" / "351912345678" (11-12 dígitos contiguos: prefijo
+        de país pegado al número, formato típico Booking)
+      - "646003298" (9 dígitos sueltos formato español)
+
+    Si no encuentra nada, devuelve ("", texto) sin tocar la cadena.
     """
     if not texto:
         return "", texto or ""
     t = str(texto)
     patrones = [
-        # "Teléfono: +34 612 345 678" / "Tel - 612345678" / "Phone 612 345 678"
-        r'(?:tel(?:[eé]fono)?|phone|tlf|m[oó]vil|celular|mobile|whatsapp|wa)\s*[:\-]?\s*(\+?\s*\d(?:[\d\s\-\.\(\)]{6,}\d))',
-        # Número internacional suelto "+34 612 345 678"
-        r'(\+\s*\d{1,3}(?:[\s\-\.\(\)]*\d){6,})',
-        # Número español típico de 9 dígitos contiguos, opcional con separadores
+        # 1) Con prefijo textual: "Tel:", "Móvil", "Phone", "WhatsApp"...
+        r'(?:tel(?:[eé]fono)?|phone|tlf|m[oó]vil|celular|mobile|whatsapp|wa)\s*[:\-]?\s*'
+        r'((?:\+|00)?\s*[\(\)\d][\d\s\-\.\(\)]{6,}\d)',
+        # 2) Internacional con + o (+...): "+34 ...", "(+351) ..."
+        r'(\(?\+\s*\d{1,3}\)?(?:[\s\-\.\(\)]*\d){6,})',
+        # 3) Internacional con 00 al principio: "0034 612 345 678"
+        r'(?<!\d)(00\s*\d{1,3}(?:[\s\-\.]*\d){6,})',
+        # 4) 10-13 dígitos contiguos (prefijo de país pegado al número):
+        #    34655462650, 351912345678, 4915123456789...
+        r'(?<!\d)(\d{10,13})(?!\d)',
+        # 5) Número de 9 dígitos típico español, opcional con separadores
         r'(?<!\d)(\d{3}[\s\-\.]?\d{3}[\s\-\.]?\d{3})(?!\d)',
+        # 6) Fallback: 8 dígitos sueltos (algunos formatos cortos)
+        r'(?<!\d)(\d{8})(?!\d)',
     ]
     for pat in patrones:
         m = re.search(pat, t, re.IGNORECASE)
         if m:
             raw = m.group(1)
-            # Normalizar: dejar dígitos, espacios y +
+            # Normalizar: dejar dígitos y signo +
             telefono = re.sub(r'[^\d\+]', ' ', raw)
             telefono = re.sub(r'\s+', ' ', telefono).strip()
-            if len(re.sub(r'\D', '', telefono)) < 7:
-                continue  # demasiado corto, no es teléfono
+            n_digits = len(re.sub(r'\D', '', telefono))
+            if n_digits < 8 or n_digits > 15:
+                continue  # fuera de rango razonable de teléfono
             # Quitar la coincidencia completa del texto original
             limpio = t[:m.start()] + t[m.end():]
             # Recortar restos del tipo "Teléfono:" sin número o separadores
-            limpio = re.sub(r'(?i)\b(?:tel(?:[eé]fono)?|phone|tlf|m[oó]vil|celular|mobile|whatsapp|wa)\s*[:\-]?\s*', '', limpio)
-            limpio = re.sub(r'\n{2,}', '\n', limpio).strip(' ,;.\n\t-')
+            limpio = re.sub(
+                r'(?i)\b(?:tel(?:[eé]fono)?|phone|tlf|m[oó]vil|celular|mobile|whatsapp|wa)\s*[:\-]?\s*',
+                '', limpio,
+            )
+            limpio = re.sub(r'\n{2,}', '\n', limpio).strip(' ,;.\n\t-()')
             return telefono, limpio
     return "", t
 
@@ -3051,8 +3070,30 @@ elif seccion == "📥 Importar Booking":
 
     if archivo:
         try:
+            # Leemos primero con una pasada normal para obtener nombres de
+            # columnas. Luego identificamos las que pueden contener telefonos
+            # y las releemos como TEXTO, para evitar que pandas las convierta
+            # a notacion cientifica (los numeros largos como 34655462650 se
+            # volvian "3,46554E+10" y perdian digitos).
             bk = pd.read_excel(archivo, header=0)
             bk.columns = [str(c).strip() for c in bk.columns]
+            _tel_keywords = ("tel", "phone", "móvil", "movil", "celular",
+                             "mobile", "whatsapp", "número", "numero")
+            _force_str_cols = [c for c in bk.columns
+                               if any(k in c.lower() for k in _tel_keywords)
+                               or "comentario" in c.lower()
+                               or "comment" in c.lower()]
+            if _force_str_cols:
+                try:
+                    archivo.seek(0)
+                    bk_str = pd.read_excel(archivo, header=0,
+                                           dtype={c: str for c in _force_str_cols})
+                    bk_str.columns = [str(c).strip() for c in bk_str.columns]
+                    for c in _force_str_cols:
+                        if c in bk_str.columns:
+                            bk[c] = bk_str[c]
+                except Exception:
+                    pass  # si falla, seguimos con la lectura normal
 
             # Mapeo de columnas Booking → nuestra BD
             COL_MAP = {
