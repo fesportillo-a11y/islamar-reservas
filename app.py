@@ -2072,8 +2072,13 @@ elif seccion == "✏️ Editar reserva":
                     ninos   = st.number_input("Niños", min_value=0,
                                               value=int(reserva.get("ninos") or 0), step=1)
                 personas    = str(adultos + ninos)
-                telefono    = st.text_input("Teléfono de contacto",
-                                            value=str(reserva.get("telefono", "") or ""))
+                _tel_edit = reserva.get("telefono", "")
+                if _tel_edit is None or (isinstance(_tel_edit, float) and pd.isna(_tel_edit)):
+                    _tel_edit = ""
+                _tel_edit = str(_tel_edit).strip()
+                if _tel_edit.lower() == "nan":
+                    _tel_edit = ""
+                telefono    = st.text_input("Teléfono de contacto", value=_tel_edit)
                 precio      = st.text_input("Precio (€)",  value=str(reserva.get("precio","")))
                 est_val     = str(reserva.get("estado_pago",""))
                 estado_pago = st.selectbox("Estado de pago", ESTADOS, index=ESTADOS.index(est_val) if est_val in ESTADOS else 0)
@@ -4077,8 +4082,18 @@ elif seccion == "📋 Listado Raquel":
                 personas_total = _max_int(grupo, "personas")
                 adultos_total  = _max_int(grupo, "adultos")
                 ninos_total    = _max_int(grupo, "ninos")
-                peticiones_raw = primera.get("comentarios", "") or ""
-                telefono_val   = str(primera.get("telefono", "") or "").strip()
+                peticiones_raw = primera.get("comentarios", "")
+                if peticiones_raw is None or (isinstance(peticiones_raw, float) and pd.isna(peticiones_raw)):
+                    peticiones_raw = ""
+                peticiones_raw = str(peticiones_raw)
+                if peticiones_raw.lower() == "nan":
+                    peticiones_raw = ""
+                _tel_bd = primera.get("telefono", "")
+                if _tel_bd is None or (isinstance(_tel_bd, float) and pd.isna(_tel_bd)):
+                    _tel_bd = ""
+                telefono_val = str(_tel_bd).strip()
+                if telefono_val.lower() == "nan":
+                    telefono_val = ""
                 # Fallback para reservas antiguas: si no hay teléfono en BD
                 # pero está metido en comentarios, lo extraemos en vivo y
                 # mostramos las peticiones sin él.
