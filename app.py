@@ -2509,9 +2509,7 @@ elif seccion == "📅 Plantilla mensual":
 
     # ── Aviso: reservas sin apartamento que solapan con este mes ───────
     # Detecta reservas en BD con apartamento vacío que afectan al mes
-    # seleccionado (entrada/salida solapan con [día 1, último día]). Estas
-    # reservas no son visibles en el calendario y deben asignarse a mano
-    # desde "✏️ Editar reserva".
+    # seleccionado y permite asignarles uno directamente en linea.
     if not df.empty:
         primer_dia_mes = date(anio_sel, mes_n, 1)
         ultimo_dia_mes = date(anio_sel, mes_n, n_dias)
@@ -2520,31 +2518,105 @@ elif seccion == "📅 Plantilla mensual":
             if es_cancelada(r.get("estado_pago", "")):
                 continue
             apto_r = str(r.get("apartamento", "") or "").strip()
-            if apto_r:
+            if apto_r and apto_r.lower() != "nan":
                 continue
             e = parse_date_safe(r.get("entrada", ""))
             s = parse_date_safe(r.get("salida", ""))
             if not e or not s:
                 continue
             if e <= ultimo_dia_mes and s > primer_dia_mes:
+                tipo = str(r.get("dormitorios", "") or "1")
+                libres = asignar_aptos_auto(tipo, e, s, 1, df)
                 filas_sin_apto.append({
-                    "id":          r.get("id"),
-                    "Nº reserva":  r.get("nro_reserva", ""),
-                    "Cliente":     r.get("nombre", ""),
-                    "Fuente":      r.get("fuente", ""),
-                    "Tipo":        r.get("dormitorios", ""),
-                    "Entrada":     r.get("entrada", ""),
-                    "Salida":      r.get("salida", ""),
+                    "id":         int(r["id"]),
+                    "Nº reserva": str(r.get("nro_reserva", "") or ""),
+                    "Cliente":    str(r.get("nombre", "") or ""),
+                    "Fuente":     str(r.get("fuente", "") or ""),
+                    "Tipo":       tipo,
+                    "Entrada":    str(r.get("entrada", "") or ""),
+                    "Salida":     str(r.get("salida", "") or ""),
+                    "sugerido":   libres[0] if libres else "",
+                    "f_e":        e,
+                    "f_s":        s,
                 })
         if filas_sin_apto:
             st.warning(
                 f"⚠️ **{len(filas_sin_apto)} reserva(s) sin apartamento asignado** "
                 f"afectan a este mes y no se muestran en el calendario. "
-                f"Asígnales un apartamento desde **✏️ Editar reserva** para que "
-                f"aparezcan."
+                f"Asígnales un apartamento aquí mismo (el desplegable trae ya "
+                f"una sugerencia automática del primer apto libre del tipo "
+                f"adecuado) y pulsa el botón. Para reservas multi-apartamento "
+                f"(Nº con sufijo `-1`, `-2`…) cada fila debe asignarse por separado."
             )
-            df_sin_apto = pd.DataFrame(filas_sin_apto).drop(columns=["id"])
-            st.dataframe(df_sin_apto, use_container_width=True, hide_index=True)
+            df_sin_apto = pd.DataFrame([{
+                "Apartamento": r["sugerido"],
+                "Nº reserva":  r["Nº reserva"],
+                "Cliente":     r["Cliente"],
+                "Fuente":      r["Fuente"],
+                "Tipo":        r["Tipo"],
+                "Entrada":     r["Entrada"],
+                "Salida":      r["Salida"],
+            } for r in filas_sin_apto])
+            edited_sin_apto = st.data_editor(
+                df_sin_apto,
+                use_container_width=True,
+                hide_index=True,
+                height=min(60 + 35 * len(df_sin_apto), 320),
+                column_config={
+                    "Apartamento": st.column_config.SelectboxColumn(
+                        "Apartamento ✏️", options=[""] + APTOS, width=185,
+                    ),
+                    "Nº reserva": st.column_config.TextColumn(width=130, disabled=True),
+                    "Cliente":    st.column_config.TextColumn(width=190, disabled=True),
+                    "Fuente":     st.column_config.TextColumn(width=110, disabled=True),
+                    "Tipo":       st.column_config.TextColumn(width=70,  disabled=True),
+                    "Entrada":    st.column_config.TextColumn(width=90,  disabled=True),
+                    "Salida":     st.column_config.TextColumn(width=90,  disabled=True),
+                },
+                num_rows="fixed",
+                key="pm_sin_apto_editor",
+            )
+            if st.button(
+                f"📍 Asignar apartamento a {len(filas_sin_apto)} reserva(s)",
+                type="primary", use_container_width=True,
+                key="pm_btn_asignar_sin_apto",
+            ):
+                df_fresh_pm = cargar_reservas()
+                aplicados_pm = 0
+                errores_pm   = []
+                conflictos_pm = []
+                for i, r in enumerate(filas_sin_apto):
+                    apto_sel = str(edited_sin_apto.iloc[i]["Apartamento"] or "").strip()
+                    if not apto_sel:
+                        continue
+                    if not apto_libre(apto_sel, r["f_e"], r["f_s"], df_fresh_pm):
+                        conflictos_pm.append(
+                            f"**{apto_sel}** · {r['Entrada']} → {r['Salida']} "
+                            f"({r['Cliente']})"
+                        )
+                        continue
+                    try:
+                        actualizar_reserva(r["id"], {"apartamento": apto_sel})
+                        aplicados_pm += 1
+                        df_fresh_pm = pd.concat([df_fresh_pm, pd.DataFrame([{
+                            "apartamento": apto_sel,
+                            "entrada":     r["Entrada"],
+                            "salida":      r["Salida"],
+                            "estado_pago": "",
+                        }])], ignore_index=True)
+                    except Exception as ex:
+                        errores_pm.append(f"{r['Nº reserva']}: {ex}")
+                if conflictos_pm:
+                    st.error(
+                        f"⛔ {len(conflictos_pm)} conflicto(s) de disponibilidad:\n\n"
+                        + "\n\n".join(f"- {c}" for c in conflictos_pm)
+                    )
+                if aplicados_pm:
+                    st.success(f"✅ {aplicados_pm} reserva(s) asignadas.")
+                    st.cache_resource.clear()
+                    st.rerun()
+                for err in errores_pm:
+                    st.error(f"Error al asignar: {err}")
 
     # ── Construir grid, salida_map y reverse_map ──────────
     grid       = {apto: {d: None for d in dias} for apto in APTOS}
