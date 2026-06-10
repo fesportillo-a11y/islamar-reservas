@@ -1735,15 +1735,49 @@ with st.sidebar:
 # ─────────────────────────────────────────────
 df = cargar_reservas()
 
+# Calcular fecha de la última importación de Booking: tomamos el created_at
+# más reciente entre las reservas con fuente=BOOKING.COM. Como las reservas
+# actualizadas mediante "Aplicar cambios" no cambian su created_at, ademas
+# consideramos updated_at si existe en BD.
+def _ultima_importacion_booking_str(df_local: pd.DataFrame) -> str:
+    if df_local.empty or "fuente" not in df_local.columns:
+        return "—"
+    mask_bk = df_local["fuente"].astype(str).str.upper() == "BOOKING.COM"
+    df_bk = df_local[mask_bk]
+    if df_bk.empty:
+        return "—"
+    candidatos = []
+    for col in ("created_at", "updated_at"):
+        if col in df_bk.columns:
+            serie = pd.to_datetime(df_bk[col], errors="coerce", utc=True)
+            serie = serie.dropna()
+            if not serie.empty:
+                candidatos.append(serie.max())
+    if not candidatos:
+        return "—"
+    ultima = max(candidatos)
+    try:
+        # Mostrar en hora de Madrid si pytz/zoneinfo disponible; si no, UTC
+        try:
+            from zoneinfo import ZoneInfo
+            ultima_local = ultima.tz_convert(ZoneInfo("Europe/Madrid"))
+        except Exception:
+            ultima_local = ultima
+        return ultima_local.strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        return str(ultima)[:16]
+
 # Pie del sidebar con estadísticas
 with st.sidebar:
     total_res   = len(df) if not df.empty else 0
     directas_n  = len(df[df["fuente"] == "DIRECTA"]) if not df.empty else 0
     booking_n   = len(df[df["fuente"] == "BOOKING.COM"]) if not df.empty else 0
+    ultima_imp  = _ultima_importacion_booking_str(df)
     st.markdown(f"""
     <div class="sb-footer">
         📋 {total_res} reservas totales<br>
         🔵 {directas_n} directas &nbsp;·&nbsp; 🟢 {booking_n} Booking<br>
+        📥 Última importación: <b>{ultima_imp}</b><br>
         <span style="opacity:.5;">ESTEASUR 2015 · ISLAMAR · 2026</span>
     </div>
     """, unsafe_allow_html=True)
