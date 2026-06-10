@@ -3378,6 +3378,13 @@ elif seccion == "📥 Importar Booking":
                 comentarios_raw = str(g("comentarios")) if g("comentarios") else ""
                 if not telefono_raw:
                     telefono_raw, comentarios_raw = _extraer_telefono(comentarios_raw)
+                else:
+                    # Excel a veces guarda el numero como float (34655462650.0)
+                    # o en notacion cientifica; quitamos decimales colgantes
+                    # y aplicamos el formateador para uniformidad.
+                    if telefono_raw.endswith(".0"):
+                        telefono_raw = telefono_raw[:-2]
+                    telefono_raw = _formatear_telefono(telefono_raw)
 
                 base = {
                     "nro_reserva": nro,
