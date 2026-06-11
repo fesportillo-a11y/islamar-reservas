@@ -2071,13 +2071,44 @@ elif seccion == "✏️ Editar reserva":
     if df.empty:
         st.info("No hay reservas cargadas todavía.")
     else:
-        # Selector de reserva
-        opciones = {
-            f"{row['nombre']}  |  {row.get('entrada','')} → {row.get('salida','')}  |  {row.get('mes','')}": row["id"]
-            for _, row in df.iterrows()
-        }
-        seleccion = st.selectbox("Selecciona la reserva a editar:", list(opciones.keys()))
-        id_sel    = opciones[seleccion]
+        # Selector de reserva: incluye apartamento y nº de reserva para poder
+        # distinguir multi-aptos del mismo cliente (ej. una reserva Booking
+        # con varias habitaciones aparece como N filas con sufijos -1, -2…).
+        def _row_label(row) -> str:
+            def s(v, d=""):
+                if v is None: return d
+                if isinstance(v, float) and pd.isna(v): return d
+                t = str(v).strip()
+                return d if t.lower() == "nan" else t
+            return (
+                f"{s(row.get('nombre'))}  |  "
+                f"{s(row.get('entrada'))} → {s(row.get('salida'))}  |  "
+                f"{s(row.get('apartamento'), '(sin apartamento)')}  |  "
+                f"Nº {s(row.get('nro_reserva'), '—')}"
+            )
+        opciones = {_row_label(row): row["id"] for _, row in df.iterrows()}
+
+        # Filtro por nombre (rapido para encontrar duplicados)
+        filtro_q = st.text_input(
+            "🔍 Buscar por nombre del cliente",
+            placeholder="Ej. Sara Isabel",
+            key="ed_filtro_nombre",
+        ).strip().lower()
+        if filtro_q:
+            opciones_f = {k: v for k, v in opciones.items() if filtro_q in k.lower()}
+            if not opciones_f:
+                st.warning("Ninguna reserva coincide con la búsqueda.")
+                opciones_f = opciones
+        else:
+            opciones_f = opciones
+
+        seleccion = st.selectbox(
+            "Selecciona la reserva a editar:", list(opciones_f.keys()),
+            help="Para reservas multi-apartamento aparecen tantas líneas como "
+                 "apartamentos tenga (con sufijos -1, -2… en el Nº). Comprueba "
+                 "el apartamento de cada una antes de eliminar la que sobre.",
+        )
+        id_sel    = opciones_f[seleccion]
         reserva   = df[df["id"] == id_sel].iloc[0]
 
         st.markdown("---")
