@@ -2086,59 +2086,103 @@ elif seccion == "✏️ Editar reserva":
             try: return datetime.strptime(str(s), "%d/%m/%Y").date()
             except: return None
 
+        def _safe_str(v, default: str = "") -> str:
+            """Devuelve v como string limpio. Convierte NaN/None a `default`."""
+            if v is None:
+                return default
+            if isinstance(v, float) and pd.isna(v):
+                return default
+            s = str(v).strip()
+            if s.lower() == "nan":
+                return default
+            return s
+
+        def _safe_int(v) -> int:
+            """Convierte v a int de forma defensiva. 0 si NaN/None/vacio."""
+            if v is None:
+                return 0
+            if isinstance(v, float) and pd.isna(v):
+                return 0
+            try:
+                s = str(v).strip()
+                if not s or s.lower() == "nan":
+                    return 0
+                return int(float(s))
+            except Exception:
+                return 0
+
         with st.form("form_editar"):
             c1, c2 = st.columns(2)
-            _tel_edit = reserva.get("telefono", "")
-            if _tel_edit is None or (isinstance(_tel_edit, float) and pd.isna(_tel_edit)):
-                _tel_edit = ""
-            _tel_edit = str(_tel_edit).strip()
-            if _tel_edit.lower() == "nan":
-                _tel_edit = ""
+            _tel_edit = _safe_str(reserva.get("telefono"))
             with c1:
-                fuente      = st.selectbox("Fuente", FUENTES, index=FUENTES.index(reserva["fuente"]) if reserva["fuente"] in FUENTES else 0)
-                nombre      = st.text_input("Nombre del cliente *", value=str(reserva.get("nombre","")))
+                fuente_val  = _safe_str(reserva.get("fuente"))
+                fuente      = st.selectbox(
+                    "Fuente", FUENTES,
+                    index=FUENTES.index(fuente_val) if fuente_val in FUENTES else 0,
+                )
+                nombre      = st.text_input("Nombre del cliente *",
+                                            value=_safe_str(reserva.get("nombre")))
                 telefono    = st.text_input(
                     "📞 Teléfono de contacto", value=_tel_edit,
                     placeholder="Ej. +34 600 000 000",
                     help="Teléfono del cliente (se mostrará en el Listado Raquel).",
                 )
-                nro_reserva = st.text_input("Nº de reserva", value=str(reserva.get("nro_reserva","")))
-                apto_val    = str(reserva.get("apartamento",""))
+                nro_reserva = st.text_input("Nº de reserva",
+                                            value=_safe_str(reserva.get("nro_reserva")))
+                apto_val    = _safe_str(reserva.get("apartamento"))
                 apto_opts   = [""] + APTOS
-                apartamento = st.selectbox("Apartamento", apto_opts, index=apto_opts.index(apto_val) if apto_val in apto_opts else 0)
-                dorm_val    = str(reserva.get("dormitorios","1"))
-                dormitorios = st.selectbox("Dormitorios", DORMS, index=DORMS.index(dorm_val) if dorm_val in DORMS else 0)
-                mes_val     = str(reserva.get("mes","ENERO")).upper()
-                mes         = st.selectbox("Mes", MESES, index=MESES.index(mes_val) if mes_val in MESES else 0)
+                apartamento = st.selectbox(
+                    "Apartamento", apto_opts,
+                    index=apto_opts.index(apto_val) if apto_val in apto_opts else 0,
+                )
+                dorm_val    = _safe_str(reserva.get("dormitorios"), "1")
+                dormitorios = st.selectbox(
+                    "Dormitorios", DORMS,
+                    index=DORMS.index(dorm_val) if dorm_val in DORMS else 0,
+                )
+                mes_val     = _safe_str(reserva.get("mes"), "ENERO").upper()
+                mes         = st.selectbox(
+                    "Mes", MESES,
+                    index=MESES.index(mes_val) if mes_val in MESES else 0,
+                )
             with c2:
                 entrada     = st.date_input("Fecha entrada", value=parse_date(reserva.get("entrada")), format="DD/MM/YYYY")
                 salida      = st.date_input("Fecha salida",  value=parse_date(reserva.get("salida")),  format="DD/MM/YYYY")
                 sub_a, sub_n = st.columns(2)
                 with sub_a:
                     adultos = st.number_input("Adultos", min_value=0,
-                                              value=int(reserva.get("adultos") or 0), step=1)
+                                              value=_safe_int(reserva.get("adultos")), step=1)
                 with sub_n:
                     ninos   = st.number_input("Niños", min_value=0,
-                                              value=int(reserva.get("ninos") or 0), step=1)
+                                              value=_safe_int(reserva.get("ninos")), step=1)
                 personas    = str(adultos + ninos)
-                precio      = st.text_input("Precio (€)",  value=str(reserva.get("precio","")))
-                est_val     = str(reserva.get("estado_pago",""))
-                estado_pago = st.selectbox("Estado de pago", ESTADOS, index=ESTADOS.index(est_val) if est_val in ESTADOS else 0)
+                precio      = st.text_input("Precio (€)",
+                                            value=_safe_str(reserva.get("precio")))
+                est_val     = _safe_str(reserva.get("estado_pago"))
+                estado_pago = st.selectbox(
+                    "Estado de pago", ESTADOS,
+                    index=ESTADOS.index(est_val) if est_val in ESTADOS else 0,
+                )
 
             c3, c4 = st.columns(2)
             with c3:
-                pago_cta  = st.text_input("Pago a cuenta (€)", value=str(reserva.get("pago_cta","")))
-                fecha_ing = st.text_input("Fecha ingreso",     value=str(reserva.get("fecha_ingreso","")))
-                fp_val    = str(reserva.get("forma_pago", "") or "")
+                pago_cta  = st.text_input("Pago a cuenta (€)",
+                                          value=_safe_str(reserva.get("pago_cta")))
+                fecha_ing = st.text_input("Fecha ingreso",
+                                          value=_safe_str(reserva.get("fecha_ingreso")))
+                fp_val    = _safe_str(reserva.get("forma_pago"))
                 forma_pago = st.selectbox(
                     "Forma de pago", FORMAS_PAGO,
                     index=FORMAS_PAGO.index(fp_val) if fp_val in FORMAS_PAGO else 0,
                     help="Banco donde se cobra el ingreso.",
                 )
             with c4:
-                resto_pdte = st.text_input("Resto pendiente (€)", value=str(reserva.get("resto_pdte","")))
+                resto_pdte = st.text_input("Resto pendiente (€)",
+                                           value=_safe_str(reserva.get("resto_pdte")))
 
-            comentarios = st.text_area("Comentarios", value=str(reserva.get("comentarios","")), height=80)
+            comentarios = st.text_area("Comentarios",
+                                       value=_safe_str(reserva.get("comentarios")),
+                                       height=80)
 
             col_save, col_del = st.columns([3, 1])
             with col_save:
