@@ -2604,11 +2604,45 @@ elif seccion == "💰 Resumen de ventas":
 elif seccion == "📅 Plantilla mensual":
 
     # ── Selectores ────────────────────────────
-    col_mes, col_anio = st.columns([2, 1])
+    col_mes, col_anio, col_busc = st.columns([2, 1, 3])
     with col_mes:
         mes_sel  = st.selectbox("Mes", MESES, index=datetime.now().month - 1, key="pm_mes")
     with col_anio:
         anio_sel = int(st.number_input("Año", min_value=2024, max_value=2030, value=2026, key="pm_anio"))
+    with col_busc:
+        busc_nombre = st.text_input(
+            "🔍 Buscar cliente",
+            placeholder="Escribe nombre o apellido (ej. Sara, Galindo)",
+            key="pm_busc_nombre",
+            help="Resalta las reservas cuyo cliente coincide con el texto. "
+                 "Las demas se atenuan para que sea facil localizar al cliente.",
+        ).strip().lower()
+
+    # Contador de coincidencias en este mes
+    if busc_nombre and not df.empty:
+        _primer = date(anio_sel, MESES.index(mes_sel) + 1, 1)
+        _ult = date(anio_sel, MESES.index(mes_sel) + 1,
+                    calendar.monthrange(anio_sel, MESES.index(mes_sel) + 1)[1])
+        n_match = 0
+        for _, _r in df.iterrows():
+            if es_cancelada(_r.get("estado_pago", "")):
+                continue
+            if busc_nombre not in str(_r.get("nombre", "") or "").lower():
+                continue
+            _e = parse_date_safe(_r.get("entrada", ""))
+            _s = parse_date_safe(_r.get("salida", ""))
+            if not _e or not _s:
+                continue
+            if _e <= _ult and _s > _primer:
+                n_match += 1
+        if n_match:
+            st.caption(
+                f"✨ **{n_match}** reserva(s) coinciden con **{busc_nombre!r}** en {mes_sel} {anio_sel}."
+            )
+        else:
+            st.caption(
+                f"_Ninguna reserva en {mes_sel} {anio_sel} coincide con {busc_nombre!r}._"
+            )
 
     mes_n      = MESES.index(mes_sel) + 1
     n_dias     = calendar.monthrange(anio_sel, mes_n)[1]
@@ -2952,6 +2986,12 @@ elif seccion == "📅 Plantilla mensual":
                 wd    = (primer_dia + d - 1) % 7
                 wc    = " sun" if wd == 6 else (" we" if wd == 5 else "")
 
+                # Helper: ¿match con la busqueda?
+                def _match(nm: str) -> bool:
+                    if not busc_nombre:
+                        return False
+                    return busc_nombre in str(nm or "").lower()
+
                 if split:
                     # ── Casilla dividida: checkout arriba / checkin abajo ──
                     txt_out = _color_reserva(c_out["id"])
@@ -2959,14 +2999,19 @@ elif seccion == "📅 Plantilla mensual":
                     bg_out, _b_out = _bar_colors(c_out.get("fuente", ""))
                     bg_in,  brd_in = _bar_colors(c.get("fuente", ""))
                     tip = f"SALE: {c_out['nombre']} ({c_out['salida']}) / ENTRA: {c['nombre']} ({c['entrada']})"
+                    m_out = _match(c_out["nombre"]); m_in = _match(c["nombre"])
+                    op_out = "1" if (not busc_nombre or m_out) else "0.25"
+                    op_in  = "1" if (not busc_nombre or m_in)  else "0.25"
+                    hl_out = "box-shadow:inset 0 0 0 3px #FFC107;" if m_out else ""
+                    hl_in  = "box-shadow:inset 0 0 0 3px #FFC107;" if m_in  else ""
                     html += (
                         f'<td class="td{wc}" style="padding:0;position:relative;overflow:hidden;" title="{tip}">'
                         f'<div style="position:absolute;top:0;left:0;right:0;height:50%;background:{bg_out};'
-                        f'display:flex;align-items:center;overflow:hidden;">'
+                        f'display:flex;align-items:center;overflow:hidden;opacity:{op_out};{hl_out}">'
                         f'<span style="color:{txt_out};font-size:0.74rem;font-weight:800;padding:0 6px;'
                         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">◀ {c_out["nombre"]}</span></div>'
                         f'<div style="position:absolute;top:50%;left:0;right:0;height:50%;background:{bg_in};'
-                        f'border-top:2px solid {brd_in};display:flex;align-items:center;overflow:hidden;">'
+                        f'border-top:2px solid {brd_in};display:flex;align-items:center;overflow:hidden;opacity:{op_in};{hl_in}">'
                         f'<span style="color:{txt_in};font-size:0.74rem;font-weight:800;padding:0 6px;'
                         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">▶ {c["nombre"]}</span></div>'
                         f'</td>'
@@ -3002,13 +3047,21 @@ elif seccion == "📅 Plantilla mensual":
                     name_text = f"{prefix}{c['nombre']}"
                     tip       = f"{c['nombre']} | {c['entrada']} → {c['salida']}"
 
+                    m_c = _match(c["nombre"])
+                    op_c = "1" if (not busc_nombre or m_c) else "0.25"
+                    if m_c:
+                        bar_brd = "#FFC107"
+                        extra_bar = "box-shadow:0 0 0 2px #FFC107;"
+                    else:
+                        extra_bar = ""
+
                     html += (
                         f'<td class="td{wc}" colspan="{colspan}" '
-                        f'style="padding:0;position:relative;overflow:hidden;" title="{tip}">'
+                        f'style="padding:0;position:relative;overflow:hidden;opacity:{op_c};" title="{tip}">'
                         f'<div style="position:absolute;top:6px;bottom:6px;'
                         f'left:{left_px};right:{right_px};background:{bar_bg};'
                         f'border:1px solid {bar_brd};border-radius:{brad};overflow:hidden;'
-                        f'display:flex;align-items:center;padding:0 10px;">'
+                        f'display:flex;align-items:center;padding:0 10px;{extra_bar}">'
                         f'<span style="font-size:0.83rem;font-weight:800;color:{txt_color};'
                         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
                         f'{name_text}</span></div></td>'
@@ -3021,10 +3074,13 @@ elif seccion == "📅 Plantilla mensual":
                     bg_out, _b_out = _bar_colors(c_out.get("fuente", ""))
                     fbg = "#eaecef" if wd >= 5 else "#fafbfd"
                     tip = f"SALE: {c_out['nombre']} ({c_out['salida']})"
+                    m_o = _match(c_out["nombre"])
+                    op_o = "1" if (not busc_nombre or m_o) else "0.25"
+                    hl_o = "box-shadow:inset 0 0 0 3px #FFC107;" if m_o else ""
                     html += (
                         f'<td class="td{wc}" style="padding:0;position:relative;overflow:hidden;" title="{tip}">'
                         f'<div style="position:absolute;top:0;left:0;right:0;height:50%;background:{bg_out};'
-                        f'display:flex;align-items:center;overflow:hidden;">'
+                        f'display:flex;align-items:center;overflow:hidden;opacity:{op_o};{hl_o}">'
                         f'<span style="color:{txt_out};font-size:0.74rem;font-weight:800;padding:0 6px;'
                         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">◀ {c_out["nombre"]}</span></div>'
                         f'<div style="position:absolute;top:50%;left:0;right:0;height:50%;'
