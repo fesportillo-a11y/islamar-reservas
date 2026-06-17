@@ -56,10 +56,16 @@ APTOS = [
     "APTO 201 - 1 DORM", "APTO 208 - 1 DORM", "APTO 209 - 1 DORM",
     "APTO 7 - 2 DORM", "APTO 14 - 2 DORM", "APTO 15 - 2 DORM",
     # ── Apartamentos JUANMA ───────────────────
-    "APTO 215 - 2 DORM", "ESTUDIO 105", "ESTUDIO 216", "ESTUDIO 217",
+    "APTO 215 - 2 DORM", "ESTUDIO 105", "ESTUDIO 217",
 ]
 
-APTOS_JUANMA = {"APTO 215 - 2 DORM", "ESTUDIO 105", "ESTUDIO 216", "ESTUDIO 217"}
+APTOS_JUANMA = {"APTO 215 - 2 DORM", "ESTUDIO 105", "ESTUDIO 217"}
+
+# Apartamentos que YA NO se ofrecen pero que pueden aparecer en reservas
+# antiguas. Aqui los listamos para no perderlos como "huerfanos": el panel
+# de "reservas sin apto valido" de la Plantilla mensual los detecta y permite
+# reasignarlas.
+APTOS_DEPRECATED = {"ESTUDIO 216"}
 
 # Apartamentos agrupados por tipo de dormitorio
 APTOS_POR_TIPO = {
@@ -2745,16 +2751,19 @@ elif seccion == "📅 Plantilla mensual":
                 f"_Ninguna reserva en {titulo_periodo} coincide con {busc_nombre!r}._"
             )
 
-    # ── Aviso: reservas sin apartamento que solapan con el rango ───────
-    # Detecta reservas en BD con apartamento vacío que afectan al rango
-    # seleccionado y permite asignarles uno directamente en linea.
+    # ── Aviso: reservas sin apartamento válido que solapan con el rango ─
+    # Detecta reservas en BD que afectan al rango y NO tienen un apto
+    # valido (vacio, NaN o un apto deprecado como "ESTUDIO 216" que ya
+    # no existe en APTOS). Permite reasignarlas en linea desde el panel.
     if not df.empty:
         filas_sin_apto = []
         for _, r in df.iterrows():
             if es_cancelada(r.get("estado_pago", "")):
                 continue
             apto_r = str(r.get("apartamento", "") or "").strip()
-            if apto_r and apto_r.lower() != "nan":
+            apto_valido = (apto_r and apto_r.lower() != "nan"
+                           and apto_r in APTOS)
+            if apto_valido:
                 continue
             e = parse_date_safe(r.get("entrada", ""))
             s = parse_date_safe(r.get("salida", ""))
@@ -2763,36 +2772,46 @@ elif seccion == "📅 Plantilla mensual":
             if e <= ultimo_dia_rango and s > primer_dia_rango:
                 tipo = str(r.get("dormitorios", "") or "1")
                 libres = asignar_aptos_auto(tipo, e, s, 1, df)
+                apto_anterior = apto_r if apto_r else "(vacío)"
+                if apto_r in APTOS_DEPRECATED:
+                    apto_anterior = f"⚠️ {apto_r}"
                 filas_sin_apto.append({
-                    "id":         int(r["id"]),
-                    "Nº reserva": str(r.get("nro_reserva", "") or ""),
-                    "Cliente":    str(r.get("nombre", "") or ""),
-                    "Fuente":     str(r.get("fuente", "") or ""),
-                    "Tipo":       tipo,
-                    "Entrada":    str(r.get("entrada", "") or ""),
-                    "Salida":     str(r.get("salida", "") or ""),
-                    "sugerido":   libres[0] if libres else "",
-                    "f_e":        e,
-                    "f_s":        s,
+                    "id":           int(r["id"]),
+                    "Nº reserva":   str(r.get("nro_reserva", "") or ""),
+                    "Cliente":      str(r.get("nombre", "") or ""),
+                    "Fuente":       str(r.get("fuente", "") or ""),
+                    "Tipo":         tipo,
+                    "Apto anterior": apto_anterior,
+                    "Entrada":      str(r.get("entrada", "") or ""),
+                    "Salida":       str(r.get("salida", "") or ""),
+                    "sugerido":     libres[0] if libres else "",
+                    "f_e":          e,
+                    "f_s":          s,
                 })
         if filas_sin_apto:
+            n_dep = sum(1 for r in filas_sin_apto
+                        if r["Apto anterior"].lstrip("⚠️ ").strip() in APTOS_DEPRECATED)
+            msg_dep = (f" De ellas, **{n_dep}** estaban en un apartamento "
+                       f"que ya no se ofrece (deprecado, ej. ESTUDIO 216) y "
+                       f"hay que reubicarlas." if n_dep else "")
             st.warning(
-                f"⚠️ **{len(filas_sin_apto)} reserva(s) sin apartamento asignado** "
-                f"afectan a este rango y no se muestran en el calendario. "
+                f"⚠️ **{len(filas_sin_apto)} reserva(s) sin apartamento válido** "
+                f"afectan a este rango y no se muestran en el calendario.{msg_dep} "
                 f"Asígnales un apartamento aquí mismo (el desplegable trae ya "
                 f"una sugerencia automática del primer apto libre del tipo "
                 f"adecuado) y pulsa el botón. Para reservas multi-apartamento "
                 f"(Nº con sufijo `-1`, `-2`…) cada fila debe asignarse por separado."
             )
             df_sin_apto = pd.DataFrame([{
-                "Apartamento": r["sugerido"],
-                "🗑️":          False,
-                "Nº reserva":  r["Nº reserva"],
-                "Cliente":     r["Cliente"],
-                "Fuente":      r["Fuente"],
-                "Tipo":        r["Tipo"],
-                "Entrada":     r["Entrada"],
-                "Salida":      r["Salida"],
+                "Apartamento":   r["sugerido"],
+                "🗑️":            False,
+                "Nº reserva":    r["Nº reserva"],
+                "Cliente":       r["Cliente"],
+                "Fuente":        r["Fuente"],
+                "Tipo":          r["Tipo"],
+                "Apto anterior": r["Apto anterior"],
+                "Entrada":       r["Entrada"],
+                "Salida":        r["Salida"],
             } for r in filas_sin_apto])
             edited_sin_apto = st.data_editor(
                 df_sin_apto,
@@ -2807,12 +2826,17 @@ elif seccion == "📅 Plantilla mensual":
                         "🗑️ Borrar", width=80,
                         help="Marca para eliminar esta reserva en lugar de asignarle apartamento.",
                     ),
-                    "Nº reserva": st.column_config.TextColumn(width=130, disabled=True),
-                    "Cliente":    st.column_config.TextColumn(width=190, disabled=True),
-                    "Fuente":     st.column_config.TextColumn(width=110, disabled=True),
-                    "Tipo":       st.column_config.TextColumn(width=70,  disabled=True),
-                    "Entrada":    st.column_config.TextColumn(width=90,  disabled=True),
-                    "Salida":     st.column_config.TextColumn(width=90,  disabled=True),
+                    "Nº reserva":    st.column_config.TextColumn(width=130, disabled=True),
+                    "Cliente":       st.column_config.TextColumn(width=190, disabled=True),
+                    "Fuente":        st.column_config.TextColumn(width=110, disabled=True),
+                    "Tipo":          st.column_config.TextColumn(width=70,  disabled=True),
+                    "Apto anterior": st.column_config.TextColumn(
+                        "Antes era", width=130, disabled=True,
+                        help="Apartamento que tenia la reserva (puede estar "
+                             "vacio o ser un apto deprecado).",
+                    ),
+                    "Entrada":       st.column_config.TextColumn(width=90,  disabled=True),
+                    "Salida":        st.column_config.TextColumn(width=90,  disabled=True),
                 },
                 num_rows="fixed",
                 key="pm_sin_apto_editor",
