@@ -2636,66 +2636,55 @@ elif seccion == "💰 Resumen de ventas":
 # ─────────────────────────────────────────────
 elif seccion == "📅 Plantilla mensual":
 
-    # ── Selector de rango de fechas (Desde / Hasta) ──────────────────
-    # Valores por defecto: mes actual completo. El usuario los puede
-    # cambiar libremente para ver cualquier rango (puede cruzar meses).
+    # ── Selector de rango de fechas (un solo picker tipo 'desde → hasta') ──
+    # Valores por defecto: mes actual completo. El usuario puede elegir
+    # cualquier rango (incluso que cruce meses) pulsando primero la fecha
+    # de inicio y luego la fecha de fin en el calendario popup.
     hoy = date.today()
     primer_mes_actual = date(hoy.year, hoy.month, 1)
     ultimo_mes_actual = date(hoy.year, hoy.month,
                               calendar.monthrange(hoy.year, hoy.month)[1])
 
-    # Inicializar session_state UNA sola vez (patron canonico de Streamlit
-    # para que los date_input y los botones rapidos puedan coexistir sin
-    # warnings ni conflictos value+key).
-    if "pm_desde" not in st.session_state:
-        st.session_state["pm_desde"] = primer_mes_actual
-    if "pm_hasta" not in st.session_state:
-        st.session_state["pm_hasta"] = ultimo_mes_actual
+    # Estado del picker (lo gestiona Streamlit con su key) e "applied"
+    # (lo usamos para el calendario). Si el usuario solo ha pulsado una
+    # fecha aun, "applied" mantiene el ultimo rango completo para que el
+    # calendario no se encoja durante la seleccion intermedia.
+    if "pm_rango_picker" not in st.session_state:
+        st.session_state["pm_rango_picker"] = (primer_mes_actual, ultimo_mes_actual)
+    if "pm_rango_applied" not in st.session_state:
+        st.session_state["pm_rango_applied"] = (primer_mes_actual, ultimo_mes_actual)
 
     def _set_rango(d1: date, d2: date):
-        st.session_state["pm_desde"] = d1
-        st.session_state["pm_hasta"] = d2
+        st.session_state["pm_rango_picker"]  = (d1, d2)
+        st.session_state["pm_rango_applied"] = (d1, d2)
 
     bt_c1, bt_c2, bt_c3, bt_c4 = st.columns(4)
     with bt_c1:
-        if st.button("📆 Este mes", use_container_width=True, key="pm_btn_este_mes"):
-            _set_rango(primer_mes_actual, ultimo_mes_actual)
-            st.rerun()
+        st.button("📆 Este mes", use_container_width=True, key="pm_btn_este_mes",
+                  on_click=_set_rango, args=(primer_mes_actual, ultimo_mes_actual))
     with bt_c2:
-        if st.button("➡️ Próximos 7 días", use_container_width=True, key="pm_btn_7d"):
-            _set_rango(hoy, hoy + timedelta(days=6))
-            st.rerun()
+        st.button("➡️ Próximos 7 días", use_container_width=True, key="pm_btn_7d",
+                  on_click=_set_rango, args=(hoy, hoy + timedelta(days=6)))
     with bt_c3:
-        if st.button("📅 Próximos 30 días", use_container_width=True, key="pm_btn_30d"):
-            _set_rango(hoy, hoy + timedelta(days=29))
-            st.rerun()
+        st.button("📅 Próximos 30 días", use_container_width=True, key="pm_btn_30d",
+                  on_click=_set_rango, args=(hoy, hoy + timedelta(days=29)))
     with bt_c4:
-        if st.button("📊 Mes siguiente", use_container_width=True, key="pm_btn_mes_sig"):
-            sig_anio = hoy.year + (1 if hoy.month == 12 else 0)
-            sig_mes  = 1 if hoy.month == 12 else hoy.month + 1
-            ult_sig  = calendar.monthrange(sig_anio, sig_mes)[1]
-            _set_rango(date(sig_anio, sig_mes, 1),
-                       date(sig_anio, sig_mes, ult_sig))
-            st.rerun()
+        _sig_anio = hoy.year + (1 if hoy.month == 12 else 0)
+        _sig_mes  = 1 if hoy.month == 12 else hoy.month + 1
+        _ult_sig  = calendar.monthrange(_sig_anio, _sig_mes)[1]
+        st.button("📊 Mes siguiente", use_container_width=True, key="pm_btn_mes_sig",
+                  on_click=_set_rango,
+                  args=(date(_sig_anio, _sig_mes, 1),
+                        date(_sig_anio, _sig_mes, _ult_sig)))
 
-    col_desde, col_hasta, col_busc = st.columns([1, 1, 2])
-    with col_desde:
-        # Solo `key` (sin `value`) para evitar el warning de Streamlit
-        # cuando se mezcla value+key con escritura en session_state.
-        primer_dia_rango = st.date_input(
-            "📅 Desde",
+    col_rango, col_busc = st.columns([2, 3])
+    with col_rango:
+        rango_sel = st.date_input(
+            "📅 Rango de fechas (desde → hasta)",
             format="DD/MM/YYYY",
-            key="pm_desde",
-            help="Primer día del rango a mostrar. Puedes elegir cualquier "
-                 "fecha (incluso de otros años) usando las flechas del "
-                 "calendario.",
-        )
-    with col_hasta:
-        ultimo_dia_rango = st.date_input(
-            "📅 Hasta",
-            format="DD/MM/YYYY",
-            key="pm_hasta",
-            help="Último día del rango (incluido). Puede cruzar meses.",
+            key="pm_rango_picker",
+            help="Pulsa primero la fecha de inicio y después la fecha de fin "
+                 "para seleccionar el rango. Puede cruzar meses (ej. 28/06/2026 → 05/07/2026).",
         )
     with col_busc:
         busc_nombre = st.text_input(
@@ -2705,6 +2694,24 @@ elif seccion == "📅 Plantilla mensual":
             help="Resalta las reservas cuyo cliente coincide con el texto. "
                  "Las demas se atenuan para destacar al cliente buscado.",
         ).strip().lower()
+
+    # Resolver el rango: solo aplicamos cuando el usuario ha pulsado las
+    # DOS fechas. En el estado intermedio (solo 1 fecha) mantenemos el
+    # ultimo rango aplicado para que el calendario no se encoja.
+    if isinstance(rango_sel, tuple) and len(rango_sel) == 2:
+        primer_dia_rango, ultimo_dia_rango = rango_sel
+        st.session_state["pm_rango_applied"] = (primer_dia_rango, ultimo_dia_rango)
+    elif isinstance(rango_sel, tuple) and len(rango_sel) == 1:
+        primer_dia_rango, ultimo_dia_rango = st.session_state["pm_rango_applied"]
+        st.caption(
+            f"⏳ Has elegido **{rango_sel[0].strftime('%d/%m/%Y')}** como inicio. "
+            f"Pulsa ahora la fecha de fin del rango."
+        )
+    else:
+        # Caso raro: date_input devuelve una fecha suelta
+        _f = rango_sel if not isinstance(rango_sel, tuple) else primer_mes_actual
+        primer_dia_rango = ultimo_dia_rango = _f
+        st.session_state["pm_rango_applied"] = (_f, _f)
 
     # Si el usuario invierte el rango lo arreglamos automaticamente
     if primer_dia_rango and ultimo_dia_rango and primer_dia_rango > ultimo_dia_rango:
