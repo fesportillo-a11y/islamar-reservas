@@ -4434,6 +4434,9 @@ elif seccion == "📋 Listado Raquel":
         peticiones_orig = []                   # texto traducido inicial (para detectar cambios)
         telefonos_orig  = []                   # teléfono mostrado inicial (para detectar cambios)
         clientes_orig   = []                   # nombre original del cliente (para detectar cambios)
+        aptos_orig      = []                   # texto Apartamento original (para detectar cambios)
+        entradas_orig   = []                   # fecha entrada original
+        salidas_orig    = []                   # fecha salida original
         with st.spinner("Preparando listado y traduciendo comentarios al español…"):
             for nro_base, grupo in df_r.groupby("_nro_base", sort=False):
                 primera = grupo.iloc[0]
@@ -4488,15 +4491,20 @@ elif seccion == "📋 Listado Raquel":
                 peticiones_orig.append(peticiones_es)
                 telefonos_orig.append(telefono_val)
                 clientes_orig.append(str(primera.get("nombre", "") or ""))
+                aptos_orig.append(apto_str)
+                entradas_orig.append(str(primera.get("entrada", "") or ""))
+                salidas_orig.append(str(primera.get("salida", "") or ""))
 
         df_raquel = pd.DataFrame(filas_raquel)
 
         st.markdown(f"**{len(df_raquel)} reserva(s)**")
         st.caption(
-            "✏️ Las columnas **Cliente**, **Teléfono** y **Peticiones** son "
-            "editables (doble clic en la celda). El **Apartamento** y las "
-            "**fechas** se cambian desde ✏️ Editar reserva. Pulsa "
-            "**💾 Guardar cambios** para persistir."
+            "✏️ **Casi todo es editable**: Cliente, Teléfono, Apartamento, "
+            "Entrada, Salida y Peticiones (doble clic en la celda). Para "
+            "**multi-apartamento** escribe los nombres exactos separados por "
+            "`+ ` (ej. `APTO 2 - 1 DORM + APTO 215 - 2 DORM`). Las fechas en "
+            "formato **DD/MM/YYYY**. Al guardar se valida que no haya "
+            "solapamientos con otras reservas. Pulsa **💾 Guardar cambios**."
         )
 
         edited_raquel = st.data_editor(
@@ -4504,8 +4512,7 @@ elif seccion == "📋 Listado Raquel":
             use_container_width=True,
             hide_index=True,
             height=min(80 + 35 * len(df_raquel), 700),
-            disabled=["Estado", "Propietario", "Fuente",
-                      "Apartamento", "Entrada", "Salida", "Personas"],
+            disabled=["Estado", "Propietario", "Fuente", "Personas"],
             column_config={
                 "Estado":      st.column_config.TextColumn(width=130),
                 "Propietario": st.column_config.TextColumn(width=110),
@@ -4516,12 +4523,21 @@ elif seccion == "📋 Listado Raquel":
                 "Teléfono":    st.column_config.TextColumn(
                     "Teléfono ✏️", width=130,
                 ),
-                "Apartamento": st.column_config.TextColumn(width=230),
-                "Entrada":     st.column_config.TextColumn(width=95),
-                "Salida":      st.column_config.TextColumn(width=95),
+                "Apartamento": st.column_config.TextColumn(
+                    "Apartamento ✏️", width=240,
+                    help="Para multi-apto usar 'APTO X + APTO Y' separados por '+'.",
+                ),
+                "Entrada":     st.column_config.TextColumn(
+                    "Entrada ✏️", width=105,
+                    help="Formato DD/MM/YYYY",
+                ),
+                "Salida":      st.column_config.TextColumn(
+                    "Salida ✏️", width=105,
+                    help="Formato DD/MM/YYYY",
+                ),
                 "Personas":    st.column_config.TextColumn(width=140),
                 "Peticiones":  st.column_config.TextColumn(
-                    "Peticiones ✏️", width=300,
+                    "Peticiones ✏️", width=280,
                 ),
             },
             num_rows="fixed",
@@ -4535,28 +4551,72 @@ elif seccion == "📋 Listado Raquel":
                          key="raquel_save"):
                 cambios = 0
                 errores = []
+
+                # Helpers locales para los nuevos campos editables
+                def _parse_fecha_listado(s: str):
+                    """dd/mm/yyyy → date, o None si no parsea."""
+                    s = (s or "").strip()
+                    if not s:
+                        return None
+                    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+                        try:
+                            return datetime.strptime(s, fmt).date()
+                        except Exception:
+                            pass
+                    return None
+
+                def _parse_aptos_texto(txt: str) -> list:
+                    """'APTO 2 + APTO 215' → ['APTO 2', 'APTO 215']
+                    '(sin asignar)' → ['']."""
+                    raw = [p.strip() for p in (txt or "").split("+")]
+                    out = []
+                    for p in raw:
+                        if not p or p.lower() == "(sin asignar)":
+                            out.append("")
+                        else:
+                            out.append(p)
+                    return out
+
+                APTOS_UPPER = {a.upper(): a for a in APTOS}
+                def _validar_apto(name: str) -> "tuple[bool, str]":
+                    """Devuelve (ok, nombre_canonico_o_msg_error)."""
+                    if not name:
+                        return True, ""  # vacio = "(sin asignar)"
+                    key = name.upper().strip()
+                    if key in APTOS_UPPER:
+                        return True, APTOS_UPPER[key]
+                    return False, name
+
+                df_actual = df  # snapshot pre-cambios para validar disponibilidad
+
                 for i in range(len(edited_raquel)):
-                    nuevo_pet = str(edited_raquel.iloc[i]["Peticiones"] or "")
+                    nuevo_pet  = str(edited_raquel.iloc[i]["Peticiones"] or "")
                     antiguo_pet = str(peticiones_orig[i] or "")
-                    nuevo_tel = str(edited_raquel.iloc[i].get("Teléfono", "") or "").strip()
+                    nuevo_tel  = str(edited_raquel.iloc[i].get("Teléfono", "") or "").strip()
                     antiguo_tel = str(telefonos_orig[i] or "").strip()
-                    nuevo_cli = str(edited_raquel.iloc[i].get("Cliente", "") or "").strip()
+                    nuevo_cli  = str(edited_raquel.iloc[i].get("Cliente", "") or "").strip()
                     antiguo_cli = str(clientes_orig[i] or "").strip()
+                    nuevo_apt  = str(edited_raquel.iloc[i].get("Apartamento", "") or "").strip()
+                    antiguo_apt = str(aptos_orig[i] or "").strip()
+                    nuevo_ent  = str(edited_raquel.iloc[i].get("Entrada", "") or "").strip()
+                    antiguo_ent = str(entradas_orig[i] or "").strip()
+                    nuevo_sal  = str(edited_raquel.iloc[i].get("Salida", "") or "").strip()
+                    antiguo_sal = str(salidas_orig[i] or "").strip()
+
                     cambio_pet = (nuevo_pet != antiguo_pet)
                     cambio_tel = (nuevo_tel != antiguo_tel)
                     cambio_cli = (nuevo_cli != antiguo_cli) and bool(nuevo_cli)
-                    if not cambio_pet and not cambio_tel and not cambio_cli:
+                    cambio_apt = (nuevo_apt != antiguo_apt)
+                    cambio_ent = (nuevo_ent != antiguo_ent)
+                    cambio_sal = (nuevo_sal != antiguo_sal)
+                    if not (cambio_pet or cambio_tel or cambio_cli or
+                            cambio_apt or cambio_ent or cambio_sal):
                         continue
-                    payload = {}
-                    if cambio_pet:
-                        payload["comentarios"] = nuevo_pet
-                    if cambio_tel:
-                        payload["telefono"] = nuevo_tel
-                    if cambio_cli:
-                        payload["nombre"] = nuevo_cli
+
+                    cliente_lbl = nuevo_cli or antiguo_cli or "(sin nombre)"
+
+                    # Localizar TODAS las filas (multi-apto) del grupo en BD.
                     nro_base = nro_bases[i]
-                    # Localizar TODAS las filas (multi-apto) que comparten ese nº base.
-                    # Para reservas sin Nº la clave es "__id_<id>": solo afecta esa fila.
                     if nro_base.startswith("__id_"):
                         try:
                             target_id = int(nro_base.removeprefix("__id_"))
@@ -4568,12 +4628,104 @@ elif seccion == "📋 Listado Raquel":
                             r"-\d+$", "", regex=True
                         )
                         reservas_grupo = df_base[bases == nro_base]
-                    for _, r in reservas_grupo.iterrows():
+                    ids_grupo = [int(r["id"]) for _, r in reservas_grupo.iterrows()]
+                    if not ids_grupo:
+                        continue  # nada que actualizar
+
+                    # ── Validar fechas si cambiaron ─────────────────────────
+                    f_ent = _parse_fecha_listado(nuevo_ent) if cambio_ent else _parse_fecha_listado(antiguo_ent)
+                    f_sal = _parse_fecha_listado(nuevo_sal) if cambio_sal else _parse_fecha_listado(antiguo_sal)
+                    if cambio_ent and f_ent is None:
+                        errores.append(f"{cliente_lbl}: fecha de entrada inválida ({nuevo_ent!r}). Use DD/MM/YYYY.")
+                        continue
+                    if cambio_sal and f_sal is None:
+                        errores.append(f"{cliente_lbl}: fecha de salida inválida ({nuevo_sal!r}). Use DD/MM/YYYY.")
+                        continue
+                    if f_ent and f_sal and f_ent >= f_sal:
+                        errores.append(f"{cliente_lbl}: la entrada debe ser anterior a la salida.")
+                        continue
+
+                    # ── Validar apartamentos si cambiaron ───────────────────
+                    aptos_nuevos = None
+                    if cambio_apt:
+                        partes = _parse_aptos_texto(nuevo_apt)
+                        if len(partes) != len(ids_grupo):
+                            errores.append(
+                                f"{cliente_lbl}: la reserva tiene {len(ids_grupo)} "
+                                f"apartamento(s) pero has escrito {len(partes)}. "
+                                f"Separa con ' + ' o usa Editar reserva."
+                            )
+                            continue
+                        aptos_canon = []
+                        ok_all = True
+                        for nm in partes:
+                            ok, canon = _validar_apto(nm)
+                            if not ok:
+                                errores.append(
+                                    f"{cliente_lbl}: apartamento desconocido {nm!r}. "
+                                    f"Comprueba el nombre exacto."
+                                )
+                                ok_all = False
+                                break
+                            aptos_canon.append(canon)
+                        if not ok_all:
+                            continue
+                        aptos_nuevos = aptos_canon
+                    else:
+                        # mantener los existentes en el mismo orden
+                        aptos_nuevos = [str(r.get("apartamento", "") or "").strip()
+                                         for _, r in reservas_grupo.iterrows()]
+
+                    # ── Validar disponibilidad si cambiaron fechas o aptos ──
+                    if (cambio_apt or cambio_ent or cambio_sal) and f_ent and f_sal:
+                        # df de "otras" reservas (excluyendo las del propio grupo)
+                        df_otros = df_actual[~df_actual["id"].astype(int).isin(ids_grupo)]
+                        conflicto = None
+                        for nuevo_a in aptos_nuevos:
+                            if not nuevo_a:
+                                continue
+                            if not apto_libre(nuevo_a, f_ent, f_sal, df_otros):
+                                conflicto = nuevo_a
+                                break
+                        if conflicto:
+                            errores.append(
+                                f"{cliente_lbl}: ⚠️ El apartamento "
+                                f"**{conflicto}** está ocupado en "
+                                f"{f_ent.strftime('%d/%m/%Y')} → "
+                                f"{f_sal.strftime('%d/%m/%Y')}. Cambio no aplicado."
+                            )
+                            continue
+
+                    # ── Payload comun a todas las filas del grupo ──────────
+                    payload_comun = {}
+                    if cambio_pet:
+                        payload_comun["comentarios"] = nuevo_pet
+                    if cambio_tel:
+                        payload_comun["telefono"] = nuevo_tel
+                    if cambio_cli:
+                        payload_comun["nombre"] = nuevo_cli
+                    if cambio_ent and f_ent:
+                        payload_comun["entrada"] = f_ent.strftime("%d/%m/%Y")
+                    if cambio_sal and f_sal:
+                        payload_comun["salida"] = f_sal.strftime("%d/%m/%Y")
+                    if (cambio_ent or cambio_sal) and f_ent and f_sal:
+                        payload_comun["noches"] = (f_sal - f_ent).days
+                        payload_comun["mes"]     = MESES[f_ent.month - 1]
+                        payload_comun["mes_num"] = f_ent.month
+
+                    # ── Aplicar update a cada fila del grupo ───────────────
+                    for idx_g, (_, r) in enumerate(reservas_grupo.iterrows()):
+                        payload = dict(payload_comun)
+                        if cambio_apt:
+                            payload["apartamento"] = aptos_nuevos[idx_g]
+                        if not payload:
+                            continue
                         try:
                             actualizar_reserva(int(r["id"]), payload)
                             cambios += 1
                         except Exception as ex:
                             errores.append(f"{r.get('nro_reserva','?')}: {ex}")
+
                 if errores:
                     for e in errores:
                         st.error(f"Error al guardar: {e}")
@@ -4583,7 +4735,7 @@ elif seccion == "📋 Listado Raquel":
                     # sustituyan a los traducidos en la próxima vista.
                     traducir_a_espanol.clear()
                     st.rerun()
-                else:
+                elif not errores:
                     st.info("No hay cambios que guardar.")
 
         with col_dl_csv:
