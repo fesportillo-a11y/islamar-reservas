@@ -111,7 +111,8 @@ def format_eur(v) -> str:
     return f"{f:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " €"
 
 def generar_excel_plantilla(grid, aptos, n_dias, mes_str, anio,
-                            primer_dia, juanma_set=None, salida_map=None) -> bytes:
+                            primer_dia, juanma_set=None, salida_map=None,
+                            dia_a_fecha=None) -> bytes:
     """Genera el calendario mensual como Excel (.xlsx), con la misma estetica
     que la vista HTML / PDF: barras de color por fuente (azul Booking, verde
     Directa), nombre del cliente en color de la paleta, fines de semana
@@ -148,10 +149,23 @@ def generar_excel_plantilla(grid, aptos, n_dias, mes_str, anio,
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
     # ── Cabecera ────────────────────────────────────
-    ws.cell(row=1, column=1, value=f"{mes_str.title()} {anio}")
+    titulo_cab = (f"{mes_str.title()} {anio}"
+                  if not dia_a_fecha else str(mes_str))
+    ws.cell(row=1, column=1, value=titulo_cab)
+    # Detectar si el rango cruza meses (para mostrar dia/mes en cambios)
+    _cruza = False
+    if dia_a_fecha:
+        _meses_distintos = {dia_a_fecha[d].month for d in range(1, n_dias + 1)}
+        _cruza = len(_meses_distintos) > 1
     for d in range(1, n_dias + 1):
         wd = (primer_dia + d - 1) % 7
-        ws.cell(row=1, column=d + 1, value=f"{d}\n{DIAS_SEM[wd]}")
+        if dia_a_fecha and d in dia_a_fecha:
+            fd = dia_a_fecha[d]
+            label = (f"{fd.day}/{fd.month:02d}" if _cruza and (d == 1 or fd.day == 1)
+                     else str(fd.day))
+        else:
+            label = str(d)
+        ws.cell(row=1, column=d + 1, value=f"{label}\n{DIAS_SEM[wd]}")
 
     for col in range(1, n_dias + 2):
         cell = ws.cell(row=1, column=col)
@@ -284,7 +298,8 @@ def generar_excel_plantilla(grid, aptos, n_dias, mes_str, anio,
 
 
 def generar_pdf_plantilla(grid, aptos, n_dias, mes_str, anio,
-                          primer_dia, juanma_set=None, salida_map=None) -> bytes:
+                          primer_dia, juanma_set=None, salida_map=None,
+                          dia_a_fecha=None) -> bytes:
     """Genera el calendario mensual (Plantilla mensual) como PDF A4 apaisado,
     con el mismo aspecto que la vista HTML: barras azul claro, nombre del
     cliente en color por reserva, fines de semana sombreados, fila separadora
@@ -348,10 +363,22 @@ def generar_pdf_plantilla(grid, aptos, n_dias, mes_str, anio,
     salida_map = salida_map or {}
 
     # ── Fila cabecera con dias y dia de la semana ──
-    header_row = [f"{mes_str.title()} {anio}"]
+    titulo_cab = (f"{mes_str.title()} {anio}"
+                  if not dia_a_fecha else str(mes_str))
+    header_row = [titulo_cab]
+    _cruza = False
+    if dia_a_fecha:
+        _meses_distintos = {dia_a_fecha[d].month for d in range(1, n_dias + 1)}
+        _cruza = len(_meses_distintos) > 1
     for d in range(1, n_dias + 1):
         wd = (primer_dia + d - 1) % 7
-        header_row.append(f"{d}\n{DIAS_SEM[wd]}")
+        if dia_a_fecha and d in dia_a_fecha:
+            fd = dia_a_fecha[d]
+            label = (f"{fd.day}/{fd.month:02d}" if _cruza and (d == 1 or fd.day == 1)
+                     else str(fd.day))
+        else:
+            label = str(d)
+        header_row.append(f"{label}\n{DIAS_SEM[wd]}")
 
     data = [header_row]
     style_cmds = [
@@ -2603,26 +2630,100 @@ elif seccion == "💰 Resumen de ventas":
 # ─────────────────────────────────────────────
 elif seccion == "📅 Plantilla mensual":
 
-    # ── Selectores ────────────────────────────
-    col_mes, col_anio, col_busc = st.columns([2, 1, 3])
-    with col_mes:
-        mes_sel  = st.selectbox("Mes", MESES, index=datetime.now().month - 1, key="pm_mes")
-    with col_anio:
-        anio_sel = int(st.number_input("Año", min_value=2024, max_value=2030, value=2026, key="pm_anio"))
-    with col_busc:
-        busc_nombre = st.text_input(
-            "🔍 Buscar cliente",
-            placeholder="Escribe nombre o apellido (ej. Sara, Galindo)",
-            key="pm_busc_nombre",
-            help="Resalta las reservas cuyo cliente coincide con el texto. "
-                 "Las demas se atenuan para que sea facil localizar al cliente.",
-        ).strip().lower()
+    # ── Selector de modo ───────────────────────
+    modo_rango = st.radio(
+        "Vista",
+        ["📅 Mes completo", "🎯 Rango personalizado"],
+        horizontal=True,
+        key="pm_modo_rango",
+        help="Cambia a 'Rango personalizado' para ver una franja de "
+             "fechas concreta (puede cruzar meses).",
+    )
+    es_rango_pers = modo_rango.startswith("🎯")
 
-    # Contador de coincidencias en este mes
+    # ── Selectores ────────────────────────────
+    if not es_rango_pers:
+        col_mes, col_anio, col_busc = st.columns([2, 1, 3])
+        with col_mes:
+            mes_sel  = st.selectbox("Mes", MESES, index=datetime.now().month - 1, key="pm_mes")
+        with col_anio:
+            anio_sel = int(st.number_input("Año", min_value=2024, max_value=2030, value=2026, key="pm_anio"))
+        with col_busc:
+            busc_nombre = st.text_input(
+                "🔍 Buscar cliente",
+                placeholder="Escribe nombre o apellido (ej. Sara, Galindo)",
+                key="pm_busc_nombre",
+                help="Resalta las reservas cuyo cliente coincide con el texto. "
+                     "Las demas se atenuan para que sea facil localizar al cliente.",
+            ).strip().lower()
+
+        mes_n            = MESES.index(mes_sel) + 1
+        primer_dia_rango = date(anio_sel, mes_n, 1)
+        ultimo_dia_rango = date(anio_sel, mes_n,
+                                 calendar.monthrange(anio_sel, mes_n)[1])
+        titulo_periodo   = f"{mes_sel} {anio_sel}"
+    else:
+        col_rango, col_busc = st.columns([2, 3])
+        with col_rango:
+            hoy = date.today()
+            fin_def = hoy + timedelta(days=6)
+            rango_pers = st.date_input(
+                "Rango de fechas",
+                value=(hoy, fin_def),
+                format="DD/MM/YYYY",
+                key="pm_rango_personalizado",
+                help="Selecciona el primer y ultimo dia del rango a mostrar. "
+                     "Puede cruzar meses (ej. 28/06/2026 → 05/07/2026).",
+            )
+        with col_busc:
+            busc_nombre = st.text_input(
+                "🔍 Buscar cliente",
+                placeholder="Escribe nombre o apellido (ej. Sara, Galindo)",
+                key="pm_busc_nombre",
+                help="Resalta las reservas cuyo cliente coincide con el texto.",
+            ).strip().lower()
+
+        # Normalizar resultado del date_input
+        if isinstance(rango_pers, tuple) and len(rango_pers) == 2:
+            primer_dia_rango, ultimo_dia_rango = rango_pers
+        elif isinstance(rango_pers, tuple) and len(rango_pers) == 1:
+            primer_dia_rango = ultimo_dia_rango = rango_pers[0]
+        else:
+            primer_dia_rango = ultimo_dia_rango = (
+                rango_pers if not isinstance(rango_pers, tuple) else hoy
+            )
+        if primer_dia_rango and ultimo_dia_rango and primer_dia_rango > ultimo_dia_rango:
+            primer_dia_rango, ultimo_dia_rango = ultimo_dia_rango, primer_dia_rango
+
+        # Variables para mantener compatibilidad con el resto del codigo
+        mes_n    = primer_dia_rango.month
+        anio_sel = primer_dia_rango.year
+        mes_sel  = MESES[mes_n - 1]
+        if (primer_dia_rango.month == ultimo_dia_rango.month
+                and primer_dia_rango.year == ultimo_dia_rango.year):
+            titulo_periodo = (
+                f"{primer_dia_rango.strftime('%d/%m/%Y')} → "
+                f"{ultimo_dia_rango.strftime('%d/%m/%Y')}"
+            )
+        else:
+            titulo_periodo = (
+                f"{primer_dia_rango.strftime('%d/%m/%Y')} → "
+                f"{ultimo_dia_rango.strftime('%d/%m/%Y')}"
+            )
+
+    # Lista de dias del rango: claves enteras 1..n_dias y mapeo a fecha real
+    n_dias    = (ultimo_dia_rango - primer_dia_rango).days + 1
+    dias      = list(range(1, n_dias + 1))
+    dia_a_fecha = {d: primer_dia_rango + timedelta(days=d - 1) for d in dias}
+    primer_dia = primer_dia_rango.weekday()   # 0=Lunes
+    DIAS_SEM   = ["L","M","X","J","V","S","D"]
+    # Si el rango cruza meses, mostraremos dia/mes en la cabecera para
+    # los dias que pertenecen al segundo mes.
+    cruza_meses = (primer_dia_rango.month != ultimo_dia_rango.month
+                   or primer_dia_rango.year != ultimo_dia_rango.year)
+
+    # Contador de coincidencias en el rango actual
     if busc_nombre and not df.empty:
-        _primer = date(anio_sel, MESES.index(mes_sel) + 1, 1)
-        _ult = date(anio_sel, MESES.index(mes_sel) + 1,
-                    calendar.monthrange(anio_sel, MESES.index(mes_sel) + 1)[1])
         n_match = 0
         for _, _r in df.iterrows():
             if es_cancelada(_r.get("estado_pago", "")):
@@ -2633,29 +2734,21 @@ elif seccion == "📅 Plantilla mensual":
             _s = parse_date_safe(_r.get("salida", ""))
             if not _e or not _s:
                 continue
-            if _e <= _ult and _s > _primer:
+            if _e <= ultimo_dia_rango and _s > primer_dia_rango:
                 n_match += 1
         if n_match:
             st.caption(
-                f"✨ **{n_match}** reserva(s) coinciden con **{busc_nombre!r}** en {mes_sel} {anio_sel}."
+                f"✨ **{n_match}** reserva(s) coinciden con **{busc_nombre!r}** en {titulo_periodo}."
             )
         else:
             st.caption(
-                f"_Ninguna reserva en {mes_sel} {anio_sel} coincide con {busc_nombre!r}._"
+                f"_Ninguna reserva en {titulo_periodo} coincide con {busc_nombre!r}._"
             )
 
-    mes_n      = MESES.index(mes_sel) + 1
-    n_dias     = calendar.monthrange(anio_sel, mes_n)[1]
-    dias       = list(range(1, n_dias + 1))
-    primer_dia = date(anio_sel, mes_n, 1).weekday()   # 0=Lunes
-    DIAS_SEM   = ["L","M","X","J","V","S","D"]
-
-    # ── Aviso: reservas sin apartamento que solapan con este mes ───────
-    # Detecta reservas en BD con apartamento vacío que afectan al mes
+    # ── Aviso: reservas sin apartamento que solapan con el rango ───────
+    # Detecta reservas en BD con apartamento vacío que afectan al rango
     # seleccionado y permite asignarles uno directamente en linea.
     if not df.empty:
-        primer_dia_mes = date(anio_sel, mes_n, 1)
-        ultimo_dia_mes = date(anio_sel, mes_n, n_dias)
         filas_sin_apto = []
         for _, r in df.iterrows():
             if es_cancelada(r.get("estado_pago", "")):
@@ -2667,7 +2760,7 @@ elif seccion == "📅 Plantilla mensual":
             s = parse_date_safe(r.get("salida", ""))
             if not e or not s:
                 continue
-            if e <= ultimo_dia_mes and s > primer_dia_mes:
+            if e <= ultimo_dia_rango and s > primer_dia_rango:
                 tipo = str(r.get("dormitorios", "") or "1")
                 libres = asignar_aptos_auto(tipo, e, s, 1, df)
                 filas_sin_apto.append({
@@ -2685,7 +2778,7 @@ elif seccion == "📅 Plantilla mensual":
         if filas_sin_apto:
             st.warning(
                 f"⚠️ **{len(filas_sin_apto)} reserva(s) sin apartamento asignado** "
-                f"afectan a este mes y no se muestran en el calendario. "
+                f"afectan a este rango y no se muestran en el calendario. "
                 f"Asígnales un apartamento aquí mismo (el desplegable trae ya "
                 f"una sugerencia automática del primer apto libre del tipo "
                 f"adecuado) y pulsa el botón. Para reservas multi-apartamento "
@@ -2842,7 +2935,6 @@ elif seccion == "📅 Plantilla mensual":
     salida_map = {}   # (apto, día) → datos del cliente que SALE ese día
     reverse_map = {}  # (apto, día) → reservation_id
 
-    dias_set = set(dias)
     for _, r in df.iterrows():
         # ── Ignorar reservas canceladas / anuladas ──────────────────────
         if es_cancelada(r.get("estado_pago", "")):
@@ -2860,8 +2952,17 @@ elif seccion == "📅 Plantilla mensual":
         except Exception:
             continue
 
-        edia = entrada.day if entrada.month == mes_n and entrada.year == anio_sel else 0
-        sdia = salida.day  if salida.month  == mes_n and salida.year  == anio_sel else n_dias + 1
+        # edia / sdia se usan como flags:
+        #   edia == 0          → la reserva ya estaba dentro antes del rango
+        #   sdia > n_dias      → la reserva termina despues del rango
+        # Si la entrada esta dentro del rango, edia es la posicion (1..n_dias).
+        edia = 0 if entrada < primer_dia_rango else (
+            (entrada - primer_dia_rango).days + 1
+        )
+        if salida <= ultimo_dia_rango:
+            sdia = (salida - primer_dia_rango).days + 1
+        else:
+            sdia = n_dias + 1
 
         # Fechas siempre en dd/mm/yyyy para el display (independiente de cómo estén en BD)
         ent_str = entrada.strftime("%d/%m/%Y")
@@ -2875,13 +2976,14 @@ elif seccion == "📅 Plantilla mensual":
             "edia": edia, "sdia": sdia,
         }
         for d in dias:
-            curr = date(anio_sel, mes_n, d)
+            curr = dia_a_fecha[d]
             if entrada <= curr < salida:
                 grid[apto][d] = data
                 reverse_map[(apto, d)] = rid
         # Registrar día de salida para casilla compartida / media casilla checkout
-        if salida.month == mes_n and salida.year == anio_sel and salida.day in dias_set:
-            salida_map[(apto, salida.day)] = data
+        if primer_dia_rango <= salida <= ultimo_dia_rango:
+            idx_salida = (salida - primer_dia_rango).days + 1
+            salida_map[(apto, idx_salida)] = data
 
     # ── Versión de edición (para refrescar data_editor tras guardar) ──
     if "edit_ver" not in st.session_state:
@@ -2921,11 +3023,18 @@ elif seccion == "📅 Plantilla mensual":
         """, unsafe_allow_html=True)
 
         html = '<div class="cal-wrap"><table class="cal-tbl">'
-        html += f'<tr><th class="th-apto" style="font-size:0.88rem;font-weight:700;">{mes_sel} {anio_sel}</th>'
+        html += f'<tr><th class="th-apto" style="font-size:0.88rem;font-weight:700;">{titulo_periodo}</th>'
         for d in dias:
             wd = (primer_dia + d - 1) % 7
             we = " sun" if wd == 6 else (" we" if wd == 5 else "")
-            html += f'<th class="th-day{we}">{d}<span class="dow">{DIAS_SEM[wd]}</span></th>'
+            fecha_d = dia_a_fecha[d]
+            # Si el rango cruza meses, mostramos dia/mes en el primer dia y
+            # cada vez que cambia el mes; el resto solo el dia.
+            if cruza_meses and (d == 1 or fecha_d.day == 1):
+                label = f"{fecha_d.day}/{fecha_d.month:02d}"
+            else:
+                label = str(fecha_d.day)
+            html += f'<th class="th-day{we}">{label}<span class="dow">{DIAS_SEM[wd]}</span></th>'
         html += '</tr>'
 
         # Paleta de 14 colores distintos y legibles — se asignan por ID de reserva
@@ -3112,22 +3221,28 @@ elif seccion == "📅 Plantilla mensual":
 
         # ── Descargar el calendario (PDF + Excel) ──────────────
         col_dl_pdf, col_dl_xls = st.columns(2)
+        _mes_str_calls = titulo_periodo if es_rango_pers else mes_sel
+        _file_suffix = (
+            f"{primer_dia_rango.strftime('%Y%m%d')}_{ultimo_dia_rango.strftime('%Y%m%d')}"
+            if es_rango_pers else f"{mes_sel}_{anio_sel}"
+        )
         if _PDF_OK:
             pdf_cal_bytes = generar_pdf_plantilla(
                 grid=grid,
                 aptos=APTOS,
                 n_dias=n_dias,
-                mes_str=mes_sel,
+                mes_str=_mes_str_calls,
                 anio=anio_sel,
                 primer_dia=primer_dia,
                 juanma_set=APTOS_JUANMA,
                 salida_map=salida_map,
+                dia_a_fecha=dia_a_fecha if es_rango_pers else None,
             )
             with col_dl_pdf:
                 st.download_button(
                     "📄 Descargar PDF (imprimir)",
                     data=pdf_cal_bytes,
-                    file_name=f"Calendario_{mes_sel}_{anio_sel}.pdf",
+                    file_name=f"Calendario_{_file_suffix}.pdf",
                     mime="application/pdf",
                     use_container_width=True,
                     key="cal_pdf_download",
@@ -3137,17 +3252,19 @@ elif seccion == "📅 Plantilla mensual":
             grid=grid,
             aptos=APTOS,
             n_dias=n_dias,
-            mes_str=mes_sel,
+            mes_str=_mes_str_calls,
             anio=anio_sel,
             primer_dia=primer_dia,
             juanma_set=APTOS_JUANMA,
             salida_map=salida_map,
+            dia_a_fecha=dia_a_fecha if es_rango_pers else None,
         )
         with col_dl_xls:
             st.download_button(
-                "📊 Descargar Excel del mes",
+                ("📊 Descargar Excel del rango" if es_rango_pers
+                 else "📊 Descargar Excel del mes"),
                 data=xlsx_cal_bytes,
-                file_name=f"Calendario_{mes_sel}_{anio_sel}.xlsx",
+                file_name=f"Calendario_{_file_suffix}.xlsx",
                 mime=("application/vnd.openxmlformats-officedocument."
                       "spreadsheetml.sheet"),
                 use_container_width=True,
@@ -3162,13 +3279,13 @@ elif seccion == "📅 Plantilla mensual":
             apto_pi  = st.selectbox("Apartamento", [""] + APTOS, key="pi_apto")
         with pi_c2:
             fecha_pi = st.date_input(
-                "Fecha", value=date(anio_sel, mes_n, 1),
-                min_value=date(anio_sel, mes_n, 1),
-                max_value=date(anio_sel, mes_n, n_dias),
+                "Fecha", value=primer_dia_rango,
+                min_value=primer_dia_rango,
+                max_value=ultimo_dia_rango,
                 format="DD/MM/YYYY", key="pi_fecha",
             )
         if apto_pi:
-            d_sel = fecha_pi.day
+            d_sel = (fecha_pi - primer_dia_rango).days + 1
             celda = grid.get(apto_pi, {}).get(d_sel)
             if celda:
                 badge = "🔵 Directa" if celda["fuente"] == "DIRECTA" else "🟢 Booking.com"
@@ -3390,14 +3507,14 @@ elif seccion == "📅 Plantilla mensual":
             # ── Crear reservas de 1 día para entradas nuevas sin match ──
             creaciones = []
             for (apto, d), nombre in nuevos.items():
-                f_ent = date(anio_sel, mes_n, d)
+                f_ent = dia_a_fecha[d]
                 f_sal = f_ent + timedelta(days=1)
                 creaciones.append({
                     "fuente":      "DIRECTA",
                     "nombre":      nombre,
                     "apartamento": apto,
-                    "mes":         mes_sel,
-                    "mes_num":     mes_n,
+                    "mes":         MESES[f_ent.month - 1],
+                    "mes_num":     f_ent.month,
                     "entrada":     f_ent.strftime("%d/%m/%Y"),
                     "salida":      f_sal.strftime("%d/%m/%Y"),
                     "noches":      1,
