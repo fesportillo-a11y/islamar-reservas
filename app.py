@@ -3990,32 +3990,51 @@ elif seccion == "📥 Importar Booking":
                 ya_exist = pd.DataFrame()
 
             # ── Sobrescritura selectiva: detectar cuáles ya existentes han cambiado ─
-            # Solo se comparan/actualizan las columnas "de Booking". Los campos manuales
-            # (pago_cta, fecha_ingreso, resto_pdte, estado_pago, comentarios, apartamento)
-            # se respetan SIEMPRE en la reserva existente.
-            # `telefono`, `adultos` y `ninos` vienen de Booking y conviene actualizarlos
-            # si faltaban (las reservas antiguas no los tenian).
+            # Distinguimos dos tipos de diferencias para evitar falsos positivos:
+            #   - CAMBIO VISIBLE: BD tenia un valor y el Excel trae otro distinto.
+            #     Se muestra al usuario para que decida.
+            #   - RELLENO SILENCIOSO: BD tenia el campo vacio y el Excel trae un
+            #     valor. Se aplica solo sin notificar (es solo completar lo que
+            #     faltaba, no es un cambio real para el usuario).
             CAMPOS_UPDATE = ["nombre", "entrada", "salida", "noches", "personas",
                              "precio", "dormitorios", "mes", "mes_num",
                              "telefono", "adultos", "ninos"]
 
             def _norm(campo, v):
-                """Normaliza para comparar entre BD y nuevo import."""
+                """Normaliza para comparar entre BD y nuevo import. Devuelve
+                cadena vacia "" para valores vacios / NaN / None (importante
+                para distinguir 'vacio' de '0' o de un valor real)."""
                 if v is None:
+                    return ""
+                if isinstance(v, float) and pd.isna(v):
                     return ""
                 if campo == "precio":
                     f = parse_eur(v)
                     return round(f, 2) if f is not None else ""
-                if campo in ("noches", "mes_num", "personas"):
+                if campo in ("noches", "mes_num", "personas", "adultos", "ninos"):
                     try:
                         s = str(v).strip().replace(".0", "")
-                        return int(float(s)) if s and s.lower() != "nan" else 0
+                        if not s or s.lower() == "nan":
+                            return ""
+                        return int(float(s))
                     except Exception:
-                        return 0
+                        return ""
+                if campo in ("entrada", "salida"):
+                    d = parse_date_safe(v)
+                    return d.isoformat() if d else ""
+                if campo in ("nombre", "mes", "dormitorios"):
+                    # case-insensitive evita "JUAN" vs "Juan" como falso positivo
+                    s = str(v).strip().lower()
+                    return "" if s == "nan" else s
+                if campo == "telefono":
+                    # comparar solo digitos para ignorar diferencias de formato
+                    s = re.sub(r"\D", "", str(v))
+                    return s
                 return str(v).strip()
 
-            updates_plan = []   # [{ "id": ..., "cambios": {campo: (antes, ahora)}, "fila_nueva": ... }]
-            sin_cambios  = []   # filas que ya existen y coinciden
+            updates_plan       = []   # cambios visibles que el usuario revisa
+            rellenos_silencio  = []   # campos vacios que se autocompletan sin avisar
+            sin_cambios        = []   # filas que ya existen y coinciden
             if not ya_exist.empty and not df.empty:
                 df_idx = df.set_index(df["nro_reserva"].astype(str))
                 for _, fila_nueva in ya_exist.iterrows():
@@ -4025,24 +4044,58 @@ elif seccion == "📥 Importar Booking":
                     fila_bd = df_idx.loc[nro_e]
                     if isinstance(fila_bd, pd.DataFrame):
                         fila_bd = fila_bd.iloc[0]   # por si hay varias filas con el mismo Nº
-                    cambios = {}
+                    cambios_visibles = {}
+                    payload_relleno  = {}
                     for c in CAMPOS_UPDATE:
                         antes = _norm(c, fila_bd.get(c))
                         ahora = _norm(c, fila_nueva.get(c))
-                        if antes != ahora:
-                            cambios[c] = (antes, ahora)
-                    if cambios:
+                        if antes == ahora:
+                            continue
+                        # Si BD vacio y Excel trae valor -> relleno silencioso
+                        bd_vacio = (antes == "" or antes is None)
+                        if bd_vacio and ahora not in ("", None):
+                            payload_relleno[c] = fila_nueva.get(c)
+                            continue
+                        # Si Excel vacio y BD tiene valor -> ignorar (no perder dato)
+                        if ahora in ("", None):
+                            continue
+                        # Cambio real: ambos tienen valor distinto
+                        cambios_visibles[c] = (antes, ahora)
+                    if cambios_visibles:
                         updates_plan.append({
                             "id":          int(fila_bd["id"]),
                             "nro_reserva": nro_e,
                             "nombre":      fila_bd.get("nombre", ""),
-                            "cambios":     cambios,
+                            "cambios":     cambios_visibles,
                             "fila_nueva":  fila_nueva,
+                            # incluimos tambien el relleno para aplicarlo si el
+                            # usuario pulsa "Aplicar cambios"
+                            "relleno":     payload_relleno,
+                        })
+                    elif payload_relleno:
+                        rellenos_silencio.append({
+                            "id":      int(fila_bd["id"]),
+                            "payload": payload_relleno,
                         })
                     else:
                         sin_cambios.append(fila_nueva)
             else:
                 sin_cambios = [r for _, r in ya_exist.iterrows()]
+
+            # Auto-aplicar rellenos sin notificar (no son cambios reales).
+            if rellenos_silencio:
+                _key_rell = f"_rellenos_auto_{hash(tuple(sorted(r['id'] for r in rellenos_silencio)))}"
+                if not st.session_state.get(_key_rell, False):
+                    n_rell = 0
+                    for r in rellenos_silencio:
+                        try:
+                            actualizar_reserva(r["id"], r["payload"])
+                            n_rell += 1
+                        except Exception:
+                            pass
+                    st.session_state[_key_rell] = True
+                    if n_rell:
+                        st.toast(f"ℹ️ {n_rell} reserva(s) completadas con datos nuevos (telefono, adultos, niños...)", icon="✏️")
 
             # ── Canceladas del Excel que ya están guardadas en la BD ───────
             canceladas_en_bd = []
@@ -4055,43 +4108,10 @@ elif seccion == "📥 Importar Booking":
                     if stored in nros_cancel or base in nros_cancel:
                         canceladas_en_bd.append(r)
 
-            # ── Reservas ya en BD que están sin apartamento asignado ────────
-            # Cuando una importación anterior no pudo asignar apto (ej. todos
-            # ocupados por una cancelada que bloqueaba) y se importó igualmente,
-            # la reserva quedó invisible en la plantilla mensual. Aquí
-            # ofrecemos reasignar usando la asignación automática actual
-            # (que ya descarta canceladas, gracias al fix de df_asignados).
-            reasignables = []
-            if not ya_exist.empty and not df.empty:
-                df_idx_re = df.set_index(df["nro_reserva"].astype(str))
-                for _, fila_nueva in ya_exist.iterrows():
-                    nro_e = str(fila_nueva["nro_reserva"])
-                    if nro_e not in df_idx_re.index:
-                        continue
-                    fila_bd = df_idx_re.loc[nro_e]
-                    if isinstance(fila_bd, pd.DataFrame):
-                        fila_bd = fila_bd.iloc[0]
-                    apto_bd = str(fila_bd.get("apartamento", "") or "").strip()
-                    if apto_bd:
-                        continue
-                    tipo_dorm = str(fila_bd.get("dormitorios", "")
-                                    or fila_nueva.get("dormitorios", "") or "1")
-                    f_e = parse_date_safe(fila_bd.get("entrada", ""))
-                    f_s = parse_date_safe(fila_bd.get("salida", ""))
-                    libres = (asignar_aptos_auto(tipo_dorm, f_e, f_s, 1, df_asignados)
-                              if f_e and f_s else [])
-                    sugerido = libres[0] if libres else ""
-                    reasignables.append({
-                        "id":          int(fila_bd["id"]),
-                        "nro_reserva": nro_e,
-                        "nombre":      str(fila_bd.get("nombre", "") or ""),
-                        "tipo_dorm":   tipo_dorm,
-                        "entrada":     str(fila_bd.get("entrada", "") or ""),
-                        "salida":      str(fila_bd.get("salida", "") or ""),
-                        "sugerido":    sugerido,
-                        "f_e":         f_e,
-                        "f_s":         f_s,
-                    })
+            # (Antes había un panel "reasignables" que mostraba en este flujo
+            #  reservas YA en BD con apartamento vacío. Se ha eliminado: esas
+            #  reservas se gestionan ahora desde el aviso "📍 Reservas sin
+            #  apartamento válido" de la Plantilla mensual, no aquí.)
 
             # ── Resumen métricas ────────────────────────────────────────────
             col_r1, col_r2, col_r3, col_r4, col_r5 = st.columns(5)
@@ -4101,147 +4121,40 @@ elif seccion == "📥 Importar Booking":
             col_r4.metric("= Sin cambios",              len(sin_cambios))
             col_r5.metric("🚫 Canceladas (excluidas)",  len(canceladas_excel))
 
-            # ── Panel de canceladas que están en la BD ──────────────────────
+            # ── Auto-eliminar canceladas que estén en la BD ─────────────────
+            # Las reservas marcadas como canceladas/no-show por Booking se
+            # eliminan AUTOMÁTICAMENTE de la BD para que no aparezcan ni en
+            # Listado Raquel ni en Plantilla mensual. No se pide confirmación.
             if canceladas_en_bd:
-                df_cancel_bd = pd.DataFrame(canceladas_en_bd)
-                st.markdown("---")
-                st.warning(
-                    f"🚨 **{len(df_cancel_bd)} reserva(s)** ya guardadas en la aplicación "
-                    f"aparecen ahora como **CANCELADAS** en Booking.com. "
-                    f"Lo recomendado es **marcarlas** como anuladas (se mantienen "
-                    f"en el listado de Raquel con la etiqueta 🚫 CANCELADA). "
-                    f"También puedes eliminarlas por completo si quieres limpiar la BD."
-                )
-                cols_c = [c for c in ["nro_reserva","nombre","apartamento","entrada","salida"]
-                          if c in df_cancel_bd.columns]
-                st.dataframe(df_cancel_bd[cols_c], use_container_width=True, hide_index=True,
-                             column_config={
-                                 "nro_reserva": st.column_config.TextColumn("Nº Reserva",  width=130),
-                                 "nombre":       st.column_config.TextColumn("Nombre",       width=190),
-                                 "apartamento":  st.column_config.TextColumn("Apartamento",  width=175),
-                                 "entrada":      st.column_config.TextColumn("Entrada",       width=90),
-                                 "salida":       st.column_config.TextColumn("Salida",        width=90),
-                             })
-                c_mark, c_del, c_keep = st.columns(3)
-                ids_cancel = [int(r["id"]) for _, r in df_cancel_bd.iterrows()]
-                # Opción recomendada: marcar como ANULADA (se mantienen visibles)
-                if c_mark.button(
-                    f"🚫 Marcar {len(ids_cancel)} como CANCELADAS (recomendado)",
-                    type="primary", use_container_width=True,
-                    key="btn_mark_cancel",
-                ):
-                    marcadas = 0
-                    for rid in ids_cancel:
+                # Evitar repetir borrados en re-renders sucesivos (Streamlit
+                # vuelve a renderizar todo el script con cada interacción).
+                _nros_cancel_proc = tuple(sorted(
+                    str(r.get("nro_reserva", "") or "") for r in canceladas_en_bd
+                ))
+                _key_proc = f"_canceladas_auto_proc_{hash(_nros_cancel_proc)}"
+                if not st.session_state.get(_key_proc, False):
+                    eliminadas_auto = 0
+                    for r in canceladas_en_bd:
                         try:
-                            actualizar_reserva(rid, {"estado_pago": "RESERVA ANULADA"})
-                            marcadas += 1
+                            eliminar_reserva(int(r["id"]))
+                            eliminadas_auto += 1
                         except Exception:
                             pass
-                    st.success(
-                        f"✅ {marcadas} reserva(s) marcadas como CANCELADAS. "
-                        f"Se siguen viendo en Listado Raquel con la etiqueta 🚫."
-                    )
-                    st.rerun()
-                # Opción destructiva: borrar del todo
-                if c_del.button(
-                    f"🗑️ Eliminar permanentemente ({len(ids_cancel)})",
-                    use_container_width=True, key="btn_del_cancel",
-                ):
-                    for rid in ids_cancel:
-                        eliminar_reserva(rid)
-                    st.success(
-                        f"✅ {len(ids_cancel)} reserva(s) eliminada(s) por completo."
-                    )
-                    st.rerun()
-                # Opción de no hacer nada
-                if c_keep.button(
-                    "Dejar como están",
-                    use_container_width=True, key="btn_keep_cancel",
-                ):
-                    st.info(
-                        "No se ha tocado nada. Recuerda que si las dejas activas, "
-                        "Raquel las verá como reservas pendientes de limpiar."
-                    )
+                    st.session_state[_key_proc] = True
+                    if eliminadas_auto:
+                        st.success(
+                            f"🗑️ **{eliminadas_auto} reserva(s) canceladas** "
+                            f"detectadas en el Excel y **eliminadas automáticamente** "
+                            f"de la base de datos. Ya no aparecen en Listado Raquel "
+                            f"ni en Plantilla mensual."
+                        )
+                        st.cache_resource.clear()
+                        st.rerun()
             elif canceladas_excel:
                 st.info(
                     f"ℹ️ {len(canceladas_excel)} reserva(s) cancelada(s) en el archivo "
                     f"— ninguna estaba guardada en la aplicación."
                 )
-
-            # ── Panel: reservas ya en BD que están sin apartamento ─────────
-            if reasignables:
-                st.markdown("---")
-                st.warning(
-                    f"📍 **{len(reasignables)} reserva(s)** ya guardadas en la "
-                    f"aplicación están **sin apartamento asignado** y no aparecen "
-                    f"en la plantilla mensual. Puedes asignarles uno desde aquí."
-                )
-                df_reasig = pd.DataFrame([{
-                    "Apartamento": r["sugerido"],
-                    "Nº Reserva":  r["nro_reserva"],
-                    "Cliente":     r["nombre"],
-                    "Tipo":        r["tipo_dorm"],
-                    "Entrada":     r["entrada"],
-                    "Salida":      r["salida"],
-                } for r in reasignables])
-                edited_reasig = st.data_editor(
-                    df_reasig,
-                    use_container_width=True,
-                    hide_index=True,
-                    height=min(60 + 35 * len(df_reasig), 360),
-                    column_config={
-                        "Apartamento": st.column_config.SelectboxColumn(
-                            "Apartamento ✏️", options=[""] + APTOS, width=185,
-                        ),
-                        "Nº Reserva": st.column_config.TextColumn(width=130, disabled=True),
-                        "Cliente":    st.column_config.TextColumn(width=190, disabled=True),
-                        "Tipo":       st.column_config.TextColumn(width=70,  disabled=True),
-                        "Entrada":    st.column_config.TextColumn(width=90,  disabled=True),
-                        "Salida":     st.column_config.TextColumn(width=90,  disabled=True),
-                    },
-                    num_rows="fixed",
-                    key="reasig_editor",
-                )
-                if st.button(
-                    f"📍 Asignar apartamento a {len(reasignables)} reserva(s)",
-                    type="primary", use_container_width=True, key="btn_reasig",
-                ):
-                    df_fresh_re = cargar_reservas()
-                    aplicados_re = 0
-                    errores_re   = []
-                    conflictos_re = []
-                    for i, r in enumerate(reasignables):
-                        apto_sel = str(edited_reasig.iloc[i]["Apartamento"] or "").strip()
-                        if not apto_sel:
-                            continue
-                        if r["f_e"] and r["f_s"]:
-                            if not apto_libre(apto_sel, r["f_e"], r["f_s"], df_fresh_re):
-                                conflictos_re.append(
-                                    f"**{apto_sel}** · {r['entrada']} → {r['salida']} "
-                                    f"({r['nombre']})"
-                                )
-                                continue
-                        try:
-                            actualizar_reserva(r["id"], {"apartamento": apto_sel})
-                            aplicados_re += 1
-                            df_fresh_re = pd.concat([df_fresh_re, pd.DataFrame([{
-                                "apartamento": apto_sel,
-                                "entrada":     r["entrada"],
-                                "salida":      r["salida"],
-                                "estado_pago": "",
-                            }])], ignore_index=True)
-                        except Exception as ex:
-                            errores_re.append(f"{r['nro_reserva']}: {ex}")
-                    if conflictos_re:
-                        st.error(
-                            f"⛔ {len(conflictos_re)} conflicto(s) de disponibilidad:\n\n"
-                            + "\n\n".join(f"- {c}" for c in conflictos_re)
-                        )
-                    if aplicados_re:
-                        st.success(f"✅ {aplicados_re} reserva(s) reasignadas.")
-                        st.rerun()
-                    for err in errores_re:
-                        st.error(f"Error al reasignar: {err}")
 
             # ── Panel de reservas existentes con cambios ────────────────────
             if updates_plan:
@@ -4275,8 +4188,12 @@ elif seccion == "📥 Importar Booking":
                     errores_upd = []
                     for u in updates_plan:
                         try:
-                            payload = {c: u["fila_nueva"].get(c) for c in CAMPOS_UPDATE
-                                       if c in u["fila_nueva"]}
+                            # Solo escribimos los campos que cambiaron + los
+                            # rellenos detectados. Asi evitamos pisar datos
+                            # manuales de campos no modificados.
+                            payload = {c: u["fila_nueva"].get(c)
+                                       for c in u["cambios"].keys()}
+                            payload.update(u.get("relleno", {}))
                             actualizar_reserva(u["id"], payload)
                             aplicados += 1
                         except Exception as ex:
