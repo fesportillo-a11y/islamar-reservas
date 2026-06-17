@@ -2644,8 +2644,14 @@ elif seccion == "📅 Plantilla mensual":
     ultimo_mes_actual = date(hoy.year, hoy.month,
                               calendar.monthrange(hoy.year, hoy.month)[1])
 
-    # Botones rapidos: aplican valores al session_state ANTES de
-    # renderizar los date_input.
+    # Inicializar session_state UNA sola vez (patron canonico de Streamlit
+    # para que los date_input y los botones rapidos puedan coexistir sin
+    # warnings ni conflictos value+key).
+    if "pm_desde" not in st.session_state:
+        st.session_state["pm_desde"] = primer_mes_actual
+    if "pm_hasta" not in st.session_state:
+        st.session_state["pm_hasta"] = ultimo_mes_actual
+
     def _set_rango(d1: date, d2: date):
         st.session_state["pm_desde"] = d1
         st.session_state["pm_hasta"] = d2
@@ -2674,20 +2680,22 @@ elif seccion == "📅 Plantilla mensual":
 
     col_desde, col_hasta, col_busc = st.columns([1, 1, 2])
     with col_desde:
+        # Solo `key` (sin `value`) para evitar el warning de Streamlit
+        # cuando se mezcla value+key con escritura en session_state.
         primer_dia_rango = st.date_input(
             "📅 Desde",
-            value=st.session_state.get("pm_desde", primer_mes_actual),
             format="DD/MM/YYYY",
             key="pm_desde",
-            help="Primer día del rango a mostrar.",
+            help="Primer día del rango a mostrar. Puedes elegir cualquier "
+                 "fecha (incluso de otros años) usando las flechas del "
+                 "calendario.",
         )
     with col_hasta:
         ultimo_dia_rango = st.date_input(
             "📅 Hasta",
-            value=st.session_state.get("pm_hasta", ultimo_mes_actual),
             format="DD/MM/YYYY",
             key="pm_hasta",
-            help="Último día del rango a mostrar (incluido).",
+            help="Último día del rango (incluido). Puede cruzar meses.",
         )
     with col_busc:
         busc_nombre = st.text_input(
@@ -3311,15 +3319,30 @@ elif seccion == "📅 Plantilla mensual":
         with pi_c1:
             apto_pi  = st.selectbox("Apartamento", [""] + APTOS, key="pi_apto")
         with pi_c2:
+            # Sin min/max: el usuario puede consultar cualquier fecha (de
+            # cualquier mes/año). Si la fecha queda fuera del rango visible
+            # del calendario, simplemente se mostrara "No hay reserva".
             fecha_pi = st.date_input(
                 "Fecha", value=primer_dia_rango,
-                min_value=primer_dia_rango,
-                max_value=ultimo_dia_rango,
                 format="DD/MM/YYYY", key="pi_fecha",
+                help="Puedes seleccionar cualquier fecha. Si esta fuera "
+                     "del rango del calendario solo veras si hay reserva o no.",
             )
         if apto_pi:
-            d_sel = (fecha_pi - primer_dia_rango).days + 1
-            celda = grid.get(apto_pi, {}).get(d_sel)
+            # Solo buscamos en el grid si la fecha cae dentro del rango
+            # mostrado actualmente.
+            if primer_dia_rango <= fecha_pi <= ultimo_dia_rango:
+                d_sel = (fecha_pi - primer_dia_rango).days + 1
+                celda = grid.get(apto_pi, {}).get(d_sel)
+            else:
+                d_sel = None
+                celda = None
+                st.info(
+                    f"ℹ️ {fecha_pi.strftime('%d/%m/%Y')} está fuera del "
+                    f"rango actualmente mostrado en el calendario "
+                    f"({titulo_periodo}). Cambia el rango Desde/Hasta arriba "
+                    f"para ver esta fecha en el calendario."
+                )
             if celda:
                 badge = "🔵 Directa" if celda["fuente"] == "DIRECTA" else "🟢 Booking.com"
                 st.success(f"**{apto_pi}** — {fecha_pi.strftime('%d/%m/%Y')}: **{celda['nombre']}** &nbsp; {badge}")
