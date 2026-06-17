@@ -2636,86 +2636,95 @@ elif seccion == "💰 Resumen de ventas":
 # ─────────────────────────────────────────────
 elif seccion == "📅 Plantilla mensual":
 
-    # ── Selector de modo ───────────────────────
-    modo_rango = st.radio(
-        "Vista",
-        ["📅 Mes completo", "🎯 Rango personalizado"],
-        horizontal=True,
-        key="pm_modo_rango",
-        help="Cambia a 'Rango personalizado' para ver una franja de "
-             "fechas concreta (puede cruzar meses).",
+    # ── Selector de rango de fechas (Desde / Hasta) ──────────────────
+    # Valores por defecto: mes actual completo. El usuario los puede
+    # cambiar libremente para ver cualquier rango (puede cruzar meses).
+    hoy = date.today()
+    primer_mes_actual = date(hoy.year, hoy.month, 1)
+    ultimo_mes_actual = date(hoy.year, hoy.month,
+                              calendar.monthrange(hoy.year, hoy.month)[1])
+
+    # Botones rapidos: aplican valores al session_state ANTES de
+    # renderizar los date_input.
+    def _set_rango(d1: date, d2: date):
+        st.session_state["pm_desde"] = d1
+        st.session_state["pm_hasta"] = d2
+
+    bt_c1, bt_c2, bt_c3, bt_c4 = st.columns(4)
+    with bt_c1:
+        if st.button("📆 Este mes", use_container_width=True, key="pm_btn_este_mes"):
+            _set_rango(primer_mes_actual, ultimo_mes_actual)
+            st.rerun()
+    with bt_c2:
+        if st.button("➡️ Próximos 7 días", use_container_width=True, key="pm_btn_7d"):
+            _set_rango(hoy, hoy + timedelta(days=6))
+            st.rerun()
+    with bt_c3:
+        if st.button("📅 Próximos 30 días", use_container_width=True, key="pm_btn_30d"):
+            _set_rango(hoy, hoy + timedelta(days=29))
+            st.rerun()
+    with bt_c4:
+        if st.button("📊 Mes siguiente", use_container_width=True, key="pm_btn_mes_sig"):
+            sig_anio = hoy.year + (1 if hoy.month == 12 else 0)
+            sig_mes  = 1 if hoy.month == 12 else hoy.month + 1
+            ult_sig  = calendar.monthrange(sig_anio, sig_mes)[1]
+            _set_rango(date(sig_anio, sig_mes, 1),
+                       date(sig_anio, sig_mes, ult_sig))
+            st.rerun()
+
+    col_desde, col_hasta, col_busc = st.columns([1, 1, 2])
+    with col_desde:
+        primer_dia_rango = st.date_input(
+            "📅 Desde",
+            value=st.session_state.get("pm_desde", primer_mes_actual),
+            format="DD/MM/YYYY",
+            key="pm_desde",
+            help="Primer día del rango a mostrar.",
+        )
+    with col_hasta:
+        ultimo_dia_rango = st.date_input(
+            "📅 Hasta",
+            value=st.session_state.get("pm_hasta", ultimo_mes_actual),
+            format="DD/MM/YYYY",
+            key="pm_hasta",
+            help="Último día del rango a mostrar (incluido).",
+        )
+    with col_busc:
+        busc_nombre = st.text_input(
+            "🔍 Buscar cliente",
+            placeholder="Nombre o apellido (ej. Sara, Galindo)",
+            key="pm_busc_nombre",
+            help="Resalta las reservas cuyo cliente coincide con el texto. "
+                 "Las demas se atenuan para destacar al cliente buscado.",
+        ).strip().lower()
+
+    # Si el usuario invierte el rango lo arreglamos automaticamente
+    if primer_dia_rango and ultimo_dia_rango and primer_dia_rango > ultimo_dia_rango:
+        primer_dia_rango, ultimo_dia_rango = ultimo_dia_rango, primer_dia_rango
+
+    # Variables para mantener compatibilidad con el resto del codigo
+    mes_n    = primer_dia_rango.month
+    anio_sel = primer_dia_rango.year
+    mes_sel  = MESES[mes_n - 1]
+    # Etiqueta del periodo: si es mes completo del calendario lo escribimos
+    # como "MES AAAA"; en cualquier otro caso como "DD/MM/YYYY → DD/MM/YYYY".
+    _es_mes_completo = (
+        primer_dia_rango.day == 1
+        and ultimo_dia_rango.day == calendar.monthrange(
+            primer_dia_rango.year, primer_dia_rango.month)[1]
+        and primer_dia_rango.month == ultimo_dia_rango.month
+        and primer_dia_rango.year == ultimo_dia_rango.year
     )
-    es_rango_pers = modo_rango.startswith("🎯")
-
-    # ── Selectores ────────────────────────────
-    if not es_rango_pers:
-        col_mes, col_anio, col_busc = st.columns([2, 1, 3])
-        with col_mes:
-            mes_sel  = st.selectbox("Mes", MESES, index=datetime.now().month - 1, key="pm_mes")
-        with col_anio:
-            anio_sel = int(st.number_input("Año", min_value=2024, max_value=2030, value=2026, key="pm_anio"))
-        with col_busc:
-            busc_nombre = st.text_input(
-                "🔍 Buscar cliente",
-                placeholder="Escribe nombre o apellido (ej. Sara, Galindo)",
-                key="pm_busc_nombre",
-                help="Resalta las reservas cuyo cliente coincide con el texto. "
-                     "Las demas se atenuan para que sea facil localizar al cliente.",
-            ).strip().lower()
-
-        mes_n            = MESES.index(mes_sel) + 1
-        primer_dia_rango = date(anio_sel, mes_n, 1)
-        ultimo_dia_rango = date(anio_sel, mes_n,
-                                 calendar.monthrange(anio_sel, mes_n)[1])
-        titulo_periodo   = f"{mes_sel} {anio_sel}"
+    if _es_mes_completo:
+        titulo_periodo = f"{mes_sel} {anio_sel}"
     else:
-        col_rango, col_busc = st.columns([2, 3])
-        with col_rango:
-            hoy = date.today()
-            fin_def = hoy + timedelta(days=6)
-            rango_pers = st.date_input(
-                "Rango de fechas",
-                value=(hoy, fin_def),
-                format="DD/MM/YYYY",
-                key="pm_rango_personalizado",
-                help="Selecciona el primer y ultimo dia del rango a mostrar. "
-                     "Puede cruzar meses (ej. 28/06/2026 → 05/07/2026).",
-            )
-        with col_busc:
-            busc_nombre = st.text_input(
-                "🔍 Buscar cliente",
-                placeholder="Escribe nombre o apellido (ej. Sara, Galindo)",
-                key="pm_busc_nombre",
-                help="Resalta las reservas cuyo cliente coincide con el texto.",
-            ).strip().lower()
-
-        # Normalizar resultado del date_input
-        if isinstance(rango_pers, tuple) and len(rango_pers) == 2:
-            primer_dia_rango, ultimo_dia_rango = rango_pers
-        elif isinstance(rango_pers, tuple) and len(rango_pers) == 1:
-            primer_dia_rango = ultimo_dia_rango = rango_pers[0]
-        else:
-            primer_dia_rango = ultimo_dia_rango = (
-                rango_pers if not isinstance(rango_pers, tuple) else hoy
-            )
-        if primer_dia_rango and ultimo_dia_rango and primer_dia_rango > ultimo_dia_rango:
-            primer_dia_rango, ultimo_dia_rango = ultimo_dia_rango, primer_dia_rango
-
-        # Variables para mantener compatibilidad con el resto del codigo
-        mes_n    = primer_dia_rango.month
-        anio_sel = primer_dia_rango.year
-        mes_sel  = MESES[mes_n - 1]
-        if (primer_dia_rango.month == ultimo_dia_rango.month
-                and primer_dia_rango.year == ultimo_dia_rango.year):
-            titulo_periodo = (
-                f"{primer_dia_rango.strftime('%d/%m/%Y')} → "
-                f"{ultimo_dia_rango.strftime('%d/%m/%Y')}"
-            )
-        else:
-            titulo_periodo = (
-                f"{primer_dia_rango.strftime('%d/%m/%Y')} → "
-                f"{ultimo_dia_rango.strftime('%d/%m/%Y')}"
-            )
+        titulo_periodo = (
+            f"{primer_dia_rango.strftime('%d/%m/%Y')} → "
+            f"{ultimo_dia_rango.strftime('%d/%m/%Y')}"
+        )
+    # Flag para mantener compatibilidad: tratamos como "rango" todo lo que
+    # no sea exactamente un mes natural completo.
+    es_rango_pers = not _es_mes_completo
 
     # Lista de dias del rango: claves enteras 1..n_dias y mapeo a fecha real
     n_dias    = (ultimo_dia_rango - primer_dia_rango).days + 1
