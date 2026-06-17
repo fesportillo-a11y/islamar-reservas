@@ -1755,13 +1755,15 @@ with st.sidebar:
             _secciones_nav.append("👥 Usuarios")
     seccion = st.radio("nav", _secciones_nav, label_visibility="collapsed")
 
-    # Filtros
-    st.markdown('<span class="sb-label">Filtros</span>', unsafe_allow_html=True)
-    filtro_mes        = st.multiselect("Mes", MESES, placeholder="Todos los meses")
-    filtro_fuente     = st.multiselect("Fuente", FUENTES, placeholder="Todas las fuentes")
-    filtro_nombre     = st.text_input("Buscar nombre", placeholder="Nombre del cliente...")
-    filtro_dorm       = st.multiselect("Dormitorios", DORMS, placeholder="Todos")
-    mostrar_canceladas = st.checkbox("Mostrar canceladas / anuladas", value=False)
+    # Los filtros antiguos del sidebar se han eliminado. Cada sección
+    # (Listado Raquel, Plantilla mensual, Reservas) tiene ahora sus
+    # propios filtros, adaptados a su contexto. Los siguientes valores
+    # por defecto se mantienen para no romper el codigo que los lee.
+    filtro_mes         = []
+    filtro_fuente      = []
+    filtro_nombre      = ""
+    filtro_dorm        = []
+    mostrar_canceladas = False
 
 # ─────────────────────────────────────────────
 # CARGAR DATOS
@@ -1839,6 +1841,57 @@ if filtro_dorm:
 # SECCIÓN: RESERVAS
 # ─────────────────────────────────────────────
 if seccion == "📊 Reservas":
+
+    # ── Filtros propios de la sección Reservas ─────────────────
+    with st.expander("🔎 Filtros (cliente, fuente, mes, dormitorios, canceladas)",
+                     expanded=False):
+        cf1, cf2 = st.columns(2)
+        with cf1:
+            filtro_nombre_res = st.text_input(
+                "Buscar nombre",
+                placeholder="Nombre o apellido del cliente",
+                key="res_filtro_nombre",
+            ).strip()
+            filtro_fuente_res = st.multiselect(
+                "Fuente", FUENTES,
+                placeholder="Todas las fuentes",
+                key="res_filtro_fuente",
+            )
+        with cf2:
+            filtro_mes_res = st.multiselect(
+                "Mes", MESES,
+                placeholder="Todos los meses",
+                key="res_filtro_mes",
+            )
+            filtro_dorm_res = st.multiselect(
+                "Dormitorios", DORMS,
+                placeholder="Todos",
+                key="res_filtro_dorm",
+            )
+        mostrar_canceladas_res = st.checkbox(
+            "Mostrar canceladas / anuladas",
+            value=False,
+            key="res_mostrar_canceladas",
+        )
+
+    # Aplicar filtros propios sobre df (no df_filtrado, que ya no se filtra)
+    df_filtrado = df.copy() if not df.empty else df
+    if not df_filtrado.empty:
+        if not mostrar_canceladas_res:
+            df_filtrado = df_filtrado[~df_filtrado["estado_pago"].apply(es_cancelada)]
+        if filtro_mes_res:
+            df_filtrado = df_filtrado[df_filtrado["mes"].isin(filtro_mes_res)]
+        if filtro_fuente_res:
+            df_filtrado = df_filtrado[df_filtrado["fuente"].isin(filtro_fuente_res)]
+        if filtro_nombre_res:
+            df_filtrado = df_filtrado[
+                df_filtrado["nombre"].astype(str).str.contains(
+                    filtro_nombre_res, case=False, na=False)
+            ]
+        if filtro_dorm_res:
+            df_filtrado = df_filtrado[
+                df_filtrado["dormitorios"].astype(str).isin(filtro_dorm_res)
+            ]
 
     # KPIs
     total      = len(df_filtrado)
