@@ -4220,15 +4220,32 @@ elif seccion == "📥 Importar Booking":
 elif seccion == "📋 Listado Raquel":
     st.markdown("### 📋 Listado Raquel")
     st.caption(
-        "Vista completa para Raquel: incluye **todas las directas, "
-        "nuevas, modificadas y canceladas** (ignora los filtros de "
-        "Fuente y 'Mostrar canceladas' del menú lateral). La columna "
-        "Estado avisa de los cambios recientes."
+        "Vista para Raquel: incluye **directas, nuevas y modificadas**. "
+        "Las **reservas canceladas se ocultan** automáticamente. "
+        "Usa los filtros de la cabecera para acotar por cliente o apartamento."
     )
 
-    # ── Filtro por fechas ──────────────────────────────
+    # ── Filtros de cabecera ──────────────────────────────
     today = date.today()
     fin_anio = date(today.year, 12, 31)
+
+    col_n, col_a = st.columns([1, 1])
+    with col_n:
+        filtro_cliente_rq = st.text_input(
+            "🔍 Filtrar por cliente",
+            placeholder="Nombre o apellido (ej. Sara)",
+            key="raquel_filtro_cliente",
+        ).strip().lower()
+    with col_a:
+        filtro_apto_rq = st.multiselect(
+            "🏠 Filtrar por apartamento",
+            options=APTOS,
+            default=[],
+            key="raquel_filtro_apto",
+            help="Si seleccionas varios, se muestran reservas que tengan al "
+                 "menos uno de los apartamentos elegidos.",
+        )
+
     col_f1, col_f2 = st.columns([3, 1])
     with col_f1:
         rango = st.date_input(
@@ -4262,11 +4279,12 @@ elif seccion == "📋 Listado Raquel":
         f_desde, f_hasta = f_hasta, f_desde
 
     # ── Base del listado: usamos TODAS las reservas (df, no df_filtrado) ─
-    # Asi siempre se ven directas + canceladas, aunque el sidebar las oculte
-    # en otras secciones. Solo aplicamos los filtros del sidebar que NO
-    # ocultan informacion relevante (mes, nombre, dormitorios).
+    # y aplicamos los filtros del sidebar que NO ocultan información (mes,
+    # dormitorios). Las reservas CANCELADAS se EXCLUYEN siempre.
     df_base = df.copy() if not df.empty else df
     if not df_base.empty:
+        if "estado_pago" in df_base.columns:
+            df_base = df_base[~df_base["estado_pago"].apply(es_cancelada)]
         if filtro_mes:
             df_base = df_base[df_base["mes"].isin(filtro_mes)]
         if filtro_nombre:
@@ -4275,6 +4293,30 @@ elif seccion == "📋 Listado Raquel":
             ]
         if filtro_dorm:
             df_base = df_base[df_base["dormitorios"].astype(str).isin(filtro_dorm)]
+        # Filtros propios de cabecera del Listado Raquel
+        if filtro_cliente_rq:
+            df_base = df_base[
+                df_base["nombre"].astype(str).str.lower()
+                .str.contains(filtro_cliente_rq, na=False)
+            ]
+        if filtro_apto_rq:
+            # Multi-apto: una reserva puede tener varias filas con apartamento
+            # distinto. Si CUALQUIERA de las filas del grupo (mismo nro_base)
+            # coincide con uno de los seleccionados, mostramos todo el grupo.
+            nros_base_serie = (df_base["nro_reserva"].astype(str)
+                               .str.replace(r"-\d+$", "", regex=True))
+            df_base = df_base.assign(_nro_base_filtro=nros_base_serie)
+            grupos_match = df_base.loc[
+                df_base["apartamento"].isin(filtro_apto_rq), "_nro_base_filtro"
+            ].unique().tolist()
+            # Las reservas SIN nro_reserva se filtran por id directo
+            ids_match_directos = df_base.loc[
+                df_base["apartamento"].isin(filtro_apto_rq), "id"
+            ].astype(int).tolist()
+            df_base = df_base[
+                df_base["_nro_base_filtro"].isin(grupos_match)
+                | df_base["id"].astype(int).isin(ids_match_directos)
+            ].drop(columns=["_nro_base_filtro"])
 
     if aplicar_fechas and f_desde and f_hasta and not df_base.empty:
         def _solapa_rango(row):
@@ -4391,15 +4433,23 @@ elif seccion == "📋 Listado Raquel":
         nro_bases    = []                      # para mapear filas → reservas en BD
         peticiones_orig = []                   # texto traducido inicial (para detectar cambios)
         telefonos_orig  = []                   # teléfono mostrado inicial (para detectar cambios)
+        clientes_orig   = []                   # nombre original del cliente (para detectar cambios)
         with st.spinner("Preparando listado y traduciendo comentarios al español…"):
             for nro_base, grupo in df_r.groupby("_nro_base", sort=False):
                 primera = grupo.iloc[0]
                 n_aptos = len(grupo)
-                tipos   = [_dorm_label_raquel(r) for _, r in grupo.iterrows()]
-                apto_str = (
-                    f"{n_aptos} apto{'s' if n_aptos > 1 else ''} · "
-                    f"{' + '.join(tipos)}"
-                )
+                # Nombres concretos del/los apartamento(s) asignado(s).
+                # "APTO 2 - 1 DORM" para 1, "APTO 2 - 1 DORM + APTO 215 - 2 DORM"
+                # para varios. Si una fila no tiene apartamento asignado,
+                # marcamos "(sin asignar)" para que no pase desapercibido.
+                nombres_aptos = []
+                for _, _r in grupo.iterrows():
+                    a = str(_r.get("apartamento", "") or "").strip()
+                    if not a or a.lower() == "nan":
+                        nombres_aptos.append("(sin asignar)")
+                    else:
+                        nombres_aptos.append(a)
+                apto_str = " + ".join(nombres_aptos)
                 personas_total = _max_int(grupo, "personas")
                 adultos_total  = _max_int(grupo, "adultos")
                 ninos_total    = _max_int(grupo, "ninos")
@@ -4437,14 +4487,16 @@ elif seccion == "📋 Listado Raquel":
                 nro_bases.append(nro_base)
                 peticiones_orig.append(peticiones_es)
                 telefonos_orig.append(telefono_val)
+                clientes_orig.append(str(primera.get("nombre", "") or ""))
 
         df_raquel = pd.DataFrame(filas_raquel)
 
         st.markdown(f"**{len(df_raquel)} reserva(s)**")
         st.caption(
-            "✏️ Las columnas **Teléfono** y **Peticiones** son editables: doble clic "
-            "en cualquier celda para añadir o cambiar el dato. Luego pulsa "
-            "**Guardar cambios**."
+            "✏️ Las columnas **Cliente**, **Teléfono** y **Peticiones** son "
+            "editables (doble clic en la celda). El **Apartamento** y las "
+            "**fechas** se cambian desde ✏️ Editar reserva. Pulsa "
+            "**💾 Guardar cambios** para persistir."
         )
 
         edited_raquel = st.data_editor(
@@ -4452,22 +4504,24 @@ elif seccion == "📋 Listado Raquel":
             use_container_width=True,
             hide_index=True,
             height=min(80 + 35 * len(df_raquel), 700),
-            disabled=["Estado", "Propietario", "Fuente", "Cliente",
+            disabled=["Estado", "Propietario", "Fuente",
                       "Apartamento", "Entrada", "Salida", "Personas"],
             column_config={
                 "Estado":      st.column_config.TextColumn(width=130),
                 "Propietario": st.column_config.TextColumn(width=110),
                 "Fuente":      st.column_config.TextColumn(width=120),
-                "Cliente":     st.column_config.TextColumn(width=200),
+                "Cliente":     st.column_config.TextColumn(
+                    "Cliente ✏️", width=200,
+                ),
                 "Teléfono":    st.column_config.TextColumn(
                     "Teléfono ✏️", width=130,
                 ),
-                "Apartamento": st.column_config.TextColumn(width=210),
+                "Apartamento": st.column_config.TextColumn(width=230),
                 "Entrada":     st.column_config.TextColumn(width=95),
                 "Salida":      st.column_config.TextColumn(width=95),
-                "Personas":    st.column_config.TextColumn(width=160),
+                "Personas":    st.column_config.TextColumn(width=140),
                 "Peticiones":  st.column_config.TextColumn(
-                    "Peticiones ✏️", width=320,
+                    "Peticiones ✏️", width=300,
                 ),
             },
             num_rows="fixed",
@@ -4486,15 +4540,20 @@ elif seccion == "📋 Listado Raquel":
                     antiguo_pet = str(peticiones_orig[i] or "")
                     nuevo_tel = str(edited_raquel.iloc[i].get("Teléfono", "") or "").strip()
                     antiguo_tel = str(telefonos_orig[i] or "").strip()
+                    nuevo_cli = str(edited_raquel.iloc[i].get("Cliente", "") or "").strip()
+                    antiguo_cli = str(clientes_orig[i] or "").strip()
                     cambio_pet = (nuevo_pet != antiguo_pet)
                     cambio_tel = (nuevo_tel != antiguo_tel)
-                    if not cambio_pet and not cambio_tel:
+                    cambio_cli = (nuevo_cli != antiguo_cli) and bool(nuevo_cli)
+                    if not cambio_pet and not cambio_tel and not cambio_cli:
                         continue
                     payload = {}
                     if cambio_pet:
                         payload["comentarios"] = nuevo_pet
                     if cambio_tel:
                         payload["telefono"] = nuevo_tel
+                    if cambio_cli:
+                        payload["nombre"] = nuevo_cli
                     nro_base = nro_bases[i]
                     # Localizar TODAS las filas (multi-apto) que comparten ese nº base.
                     # Para reservas sin Nº la clave es "__id_<id>": solo afecta esa fila.
