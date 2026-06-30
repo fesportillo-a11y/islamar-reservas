@@ -2594,6 +2594,23 @@ elif seccion == "✏️ Editar reserva":
         # ── Sección de facturación / documento de reserva ────────
         st.markdown("---")
         st.markdown("### 📄 Factura / documento de reserva")
+
+        # Detectamos si las columnas de factura ya existen en BD
+        _col_nif_existe = ("nif" in df.columns)
+        _col_nro_existe = ("nro_factura" in df.columns)
+        if not (_col_nif_existe and _col_nro_existe):
+            st.error(
+                "⚠️ Las columnas de factura aún no están creadas en la BD. "
+                "Ve a **Supabase → SQL Editor → New query** y ejecuta:\n\n"
+                "```sql\n"
+                "ALTER TABLE reservas ADD COLUMN IF NOT EXISTS nif           TEXT;\n"
+                "ALTER TABLE reservas ADD COLUMN IF NOT EXISTS nro_factura   TEXT;\n"
+                "ALTER TABLE reservas ADD COLUMN IF NOT EXISTS fecha_factura TEXT;\n"
+                "NOTIFY pgrst, 'reload schema';\n"
+                "```\n\n"
+                "Después recarga la página (Ctrl+F5) y vuelve a intentarlo."
+            )
+
         nf_actual = _safe_str(reserva.get("nro_factura"))
         ff_actual = _safe_str(reserva.get("fecha_factura"))
         col_nf, col_ff = st.columns(2)
@@ -2622,10 +2639,27 @@ elif seccion == "✏️ Editar reserva":
                          if not nf_actual
                          else "♻️ Re-emitir factura (nuevo número)")
             if st.button(label_btn, type="primary",
-                         use_container_width=True, key="btn_emit_factura"):
-                if not _safe_str(reserva.get("nif")).strip():
-                    st.error("⚠️ Hace falta el N.I.F. del cliente para emitir factura. "
-                             "Edítalo arriba, guarda los cambios y vuelve a intentarlo.")
+                         use_container_width=True, key="btn_emit_factura",
+                         disabled=not (_col_nif_existe and _col_nro_existe)):
+                # Recargamos los datos frescos por si acaba de guardar cambios
+                nif_bd_fresco = ""
+                try:
+                    _resp = supabase.table("reservas").select("nif").eq(
+                        "id", int(id_sel)).execute()
+                    if _resp.data:
+                        nif_bd_fresco = _safe_str(_resp.data[0].get("nif"))
+                except Exception:
+                    nif_bd_fresco = _safe_str(reserva.get("nif"))
+
+                if not nif_bd_fresco.strip():
+                    st.error(
+                        "⚠️ Hace falta el **N.I.F.** del cliente para emitir "
+                        "factura.\n\n"
+                        "1. Rellena el campo **🪪 N.I.F. del cliente** arriba.\n"
+                        "2. Pulsa **💾 Guardar cambios** (es el botón azul "
+                        "grande, no el de Emitir).\n"
+                        "3. Después vuelve a pulsar **📄 Emitir factura**."
+                    )
                 else:
                     nuevo_nro = siguiente_nro_factura()
                     hoy_iso   = date.today().isoformat()
