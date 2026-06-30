@@ -1088,6 +1088,31 @@ def _formatear_telefono(raw: str) -> str:
         return f"+{pais} {local_fmt}".strip()
     return local_fmt
 
+def _safe_str_g(v, default: str = "") -> str:
+    """Devuelve v como string limpio. NaN/None/'nan' → default. Helper
+    de modulo (usado tanto en Editar reserva como en Documento de reserva)."""
+    if v is None:
+        return default
+    if isinstance(v, float) and pd.isna(v):
+        return default
+    s = str(v).strip()
+    if s.lower() == "nan":
+        return default
+    return s
+
+def _safe_int_g(v) -> int:
+    if v is None:
+        return 0
+    if isinstance(v, float) and pd.isna(v):
+        return 0
+    try:
+        s = str(v).strip()
+        if not s or s.lower() == "nan":
+            return 0
+        return int(float(s))
+    except Exception:
+        return 0
+
 def _extraer_telefono(texto: str) -> tuple[str, str]:
     """Detecta un número de teléfono dentro de un texto (típico en los
     comentarios de Booking) y lo separa. Devuelve (telefono, texto_limpio).
@@ -2037,6 +2062,7 @@ with st.sidebar:
             "📥 Importar Booking",
             "➕ Nueva reserva",
             "✏️ Editar reserva",
+            "📄 Documento de reserva",
         ]
         # Pantalla "👥 Usuarios": solo visible para admins. Si la tabla
         # `usuarios` aún no existe en Supabase, la pantalla mostrará la
@@ -5432,6 +5458,185 @@ elif seccion == "📋 Listado Raquel":
                 )
             else:
                 st.caption("PDF no disponible (reportlab no instalado)")
+
+# ─────────────────────────────────────────────
+# SECCIÓN: DOCUMENTO DE RESERVA (acceso directo)
+# ─────────────────────────────────────────────
+# Duplica el flujo del panel "Documento de reserva" que ya existe dentro
+# de Editar reserva, pero en una pantalla propia con buscador de cliente
+# y selector de reserva. La de Editar reserva sigue funcionando igual.
+elif seccion == "📄 Documento de reserva":
+    st.markdown("### 📄 Documento de reserva")
+    st.caption(
+        "Genera el documento PDF de reserva tipo ESTEASUR para enviar al "
+        "cliente. Busca al cliente, selecciona la reserva concreta, rellena "
+        "el N.I.F. si no lo tiene, ajusta nº y fecha y descarga el PDF."
+    )
+
+    if df.empty:
+        st.info("No hay reservas cargadas todavía.")
+    else:
+        # ── Detectar columnas BD necesarias ──
+        _col_nif_ok = ("nif" in df.columns)
+        _col_nro_ok = ("nro_factura" in df.columns)
+        if not (_col_nif_ok and _col_nro_ok):
+            st.error(
+                "⚠️ Las columnas de documento aún no están creadas en la BD. "
+                "Ve a **Supabase → SQL Editor → New query** y ejecuta:\n\n"
+                "```sql\n"
+                "ALTER TABLE reservas ADD COLUMN IF NOT EXISTS nif           TEXT;\n"
+                "ALTER TABLE reservas ADD COLUMN IF NOT EXISTS nro_factura   TEXT;\n"
+                "ALTER TABLE reservas ADD COLUMN IF NOT EXISTS fecha_factura TEXT;\n"
+                "NOTIFY pgrst, 'reload schema';\n"
+                "```\n\n"
+                "Después recarga (Ctrl+F5)."
+            )
+            st.stop()
+
+        # ── Buscador por nombre + selector de reserva ──
+        def _label_doc(row) -> str:
+            return (
+                f"{_safe_str_g(row.get('nombre'))}  |  "
+                f"{_safe_str_g(row.get('entrada'))} → {_safe_str_g(row.get('salida'))}  |  "
+                f"{_safe_str_g(row.get('apartamento'), '(sin apartamento)')}  |  "
+                f"Nº {_safe_str_g(row.get('nro_reserva'), '—')}"
+            )
+        opciones_doc = {_label_doc(r): r["id"] for _, r in df.iterrows()}
+
+        filtro_q = st.text_input(
+            "🔍 Buscar cliente por nombre",
+            placeholder="Ej. Fernández, Sara…",
+            key="doc_filtro_nombre",
+        ).strip().lower()
+
+        if filtro_q:
+            opciones_f = {k: v for k, v in opciones_doc.items() if filtro_q in k.lower()}
+            if not opciones_f:
+                st.warning("Ninguna reserva coincide con la búsqueda.")
+                opciones_f = opciones_doc
+        else:
+            opciones_f = opciones_doc
+
+        sel = st.selectbox(
+            "Selecciona la reserva:", list(opciones_f.keys()),
+            key="doc_select",
+        )
+        id_doc = opciones_f[sel]
+        reserva_doc = df[df["id"] == id_doc].iloc[0]
+
+        st.markdown("---")
+
+        # ── Panel idéntico al de Editar reserva ─────────────────
+        nf_doc_actual  = _safe_str_g(reserva_doc.get("nro_factura"))
+        ff_doc_actual  = _safe_str_g(reserva_doc.get("fecha_factura"))
+        nif_doc_actual = _safe_str_g(reserva_doc.get("nif"))
+        _ff_d = parse_date_safe(ff_doc_actual) or date.today()
+        _sug_nro = nf_doc_actual if nf_doc_actual else siguiente_nro_factura()
+
+        nuevo_nif = st.text_input(
+            "🪪 N.I.F. del cliente",
+            value=nif_doc_actual,
+            placeholder="Ej. 50816337Z",
+            key="doc2_nif",
+            help="Imprescindible para emitir el documento. Se guarda al "
+                 "pulsar 'Emitir documento'.",
+        )
+
+        col1, col2 = st.columns(2)
+        with col1:
+            nuevo_nro = st.text_input(
+                "Nº de documento",
+                value=_sug_nro,
+                key="doc2_nro",
+                help="Editable. Se sugiere el siguiente correlativo automático.",
+            )
+        with col2:
+            nuevo_fecha = st.date_input(
+                "Fecha de emisión",
+                value=_ff_d,
+                format="DD/MM/YYYY",
+                key="doc2_fecha",
+            )
+
+        # ── Resumen rápido de la reserva (info contextual) ──
+        with st.expander("ℹ️ Datos de la reserva seleccionada", expanded=False):
+            cli  = _safe_str_g(reserva_doc.get("nombre"))
+            apto = _safe_str_g(reserva_doc.get("apartamento"))
+            ent  = _safe_str_g(reserva_doc.get("entrada"))
+            sal  = _safe_str_g(reserva_doc.get("salida"))
+            prc  = _safe_str_g(reserva_doc.get("precio"))
+            pgc  = _safe_str_g(reserva_doc.get("pago_cta"))
+            rst  = _safe_str_g(reserva_doc.get("resto_pdte"))
+            st.markdown(
+                f"- **Cliente**: {cli}\n"
+                f"- **Apartamento**: {apto}\n"
+                f"- **Entrada → salida**: {ent} → {sal}\n"
+                f"- **Precio**: {prc}  ·  **Pago a cuenta**: {pgc}  ·  "
+                f"**Resto pendiente**: {rst}\n"
+                f"- **N.I.F. en BD**: {nif_doc_actual or '(sin guardar)'}\n"
+                f"- **Nº documento en BD**: {nf_doc_actual or '(aún sin emitir)'}\n"
+                f"- **Fecha emisión en BD**: {ff_doc_actual or '(aún sin emitir)'}"
+            )
+
+        col_e, col_p = st.columns(2)
+        with col_e:
+            lbl = ("📄 Emitir documento"
+                   if not nf_doc_actual
+                   else "💾 Guardar cambios del documento")
+            if st.button(lbl, type="primary",
+                         use_container_width=True, key="doc2_btn_emitir"):
+                nif_in = str(nuevo_nif or "").strip()
+                if not nif_in:
+                    st.error("⚠️ Hace falta el **N.I.F.** del cliente.")
+                elif not str(nuevo_nro or "").strip():
+                    st.error("⚠️ El número de documento no puede estar vacío.")
+                else:
+                    try:
+                        actualizar_reserva(int(id_doc), {
+                            "nif":           nif_in,
+                            "nro_factura":   str(nuevo_nro).strip(),
+                            "fecha_factura": nuevo_fecha.isoformat(),
+                        })
+                        st.success(
+                            f"✅ Documento **{nuevo_nro}** "
+                            f"({_fecha_larga_es(nuevo_fecha)}) guardado. "
+                            f"Pulsa **⬇️ Descargar PDF** para obtenerlo."
+                        )
+                        st.cache_resource.clear()
+                        st.rerun()
+                    except Exception as ex:
+                        st.error(f"Error al guardar: {ex}")
+        with col_p:
+            puede_pdf = (bool(str(nuevo_nif or "").strip())
+                         and bool(str(nuevo_nro or "").strip())
+                         and _PDF_OK)
+            if puede_pdf:
+                rd = (reserva_doc.to_dict()
+                      if hasattr(reserva_doc, "to_dict") else dict(reserva_doc))
+                rd["nif"]           = str(nuevo_nif).strip()
+                rd["nro_factura"]   = str(nuevo_nro).strip()
+                rd["fecha_factura"] = nuevo_fecha.isoformat()
+                try:
+                    pdf_bytes = generar_factura_pdf(rd)
+                    nombre_arch = (
+                        _safe_str_g(reserva_doc.get("nombre"))[:30].replace(" ", "_")
+                    )
+                    st.download_button(
+                        "⬇️ Descargar PDF documento",
+                        data=pdf_bytes,
+                        file_name=f"Documento_Reserva_{nuevo_nro}_{nombre_arch}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True,
+                        key="doc2_btn_pdf",
+                    )
+                except Exception as ex:
+                    st.error(f"Error al generar PDF: {ex}")
+            else:
+                st.button(
+                    "⬇️ Descargar PDF documento",
+                    disabled=True, use_container_width=True,
+                    help="Rellena N.I.F. y Nº de documento para descargar.",
+                )
 
 # ─────────────────────────────────────────────
 # SECCIÓN: USUARIOS (solo admins)
