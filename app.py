@@ -4526,10 +4526,12 @@ elif seccion == "📋 Listado Raquel":
             return f"{total} ({adultos} ad + {ninos} niños)"
 
         # Patron de regex para detectar la cabecera de pago al guardar
-        # (para no escribir literalmente "💰 Pagado…" en BD).
+        # (para no escribir literalmente "💰 Pagado…" en BD). Acepta los
+        # separadores que usamos para combinar pago + peticiones:
+        # "  ·  " (dos espacios + medio-punto + dos espacios), " | ", "\n".
         _PAGO_PREFIJO_RE = re.compile(
-            r'^\s*(?:✅\s*PAGADO|⏳\s*Pendiente|💰\s*Pagado)[^\n|]*'
-            r'(?:\s*\|\s*|\s*\n+\s*)?',
+            r'^\s*(?:✅\s*PAGADO|⏳\s*Pendiente|💰\s*Pagado)[^\n|·]*?'
+            r'(?:\s*[·|]\s*|\s*\n+\s*)?',
             re.IGNORECASE,
         )
 
@@ -4685,14 +4687,23 @@ elif seccion == "📋 Listado Raquel":
                     telefono_val, peticiones_raw = _extraer_telefono(peticiones_raw)
                 # Limpiamos posible prefijo de pago de una sesion anterior
                 peticiones_raw = _strip_pago_prefijo(peticiones_raw)
-                peticiones_es  = traducir_a_espanol(peticiones_raw)
+                # Traducimos el comentario original SOLO si tiene contenido.
+                # Importante: aunque haya pago_info, los comentarios reales
+                # del cliente (peticiones) deben aparecer SIEMPRE detras.
+                comentario_es = ""
+                if peticiones_raw and peticiones_raw.strip():
+                    comentario_es = traducir_a_espanol(peticiones_raw).strip()
+
                 # Prepend resumen de pago (solo DIRECTAS o JUANMA)
                 pago_info_txt = _pago_info_str(primera, apto_str)
-                if pago_info_txt:
-                    if peticiones_es:
-                        peticiones_es = f"{pago_info_txt} | {peticiones_es}"
-                    else:
-                        peticiones_es = pago_info_txt
+
+                # Combinacion: pago + comentario, comentario solo, o pago solo
+                if pago_info_txt and comentario_es:
+                    peticiones_es = f"{pago_info_txt}  ·  {comentario_es}"
+                elif pago_info_txt:
+                    peticiones_es = pago_info_txt
+                else:
+                    peticiones_es = comentario_es
 
                 filas_raquel.append({
                     "Estado":      _estado_grupo(grupo),
@@ -4760,7 +4771,10 @@ elif seccion == "📋 Listado Raquel":
                 ),
                 "Personas":    st.column_config.TextColumn(width=140),
                 "Peticiones":  st.column_config.TextColumn(
-                    "Peticiones ✏️", width=280,
+                    "Peticiones ✏️", width=420,
+                    help="Empieza con el resumen de pago automatico "
+                         "(DIRECTAS / JUANMA) y a continuacion los "
+                         "comentarios del cliente.",
                 ),
             },
             num_rows="fixed",
