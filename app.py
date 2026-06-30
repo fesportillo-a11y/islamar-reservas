@@ -2656,7 +2656,22 @@ elif seccion == "✏️ Editar reserva":
 
         # ── Sección de documento de reserva ──────────────────────
         st.markdown("---")
-        st.markdown("### 📄 Documento de reserva")
+        col_titulo, col_recarga = st.columns([3, 1])
+        with col_titulo:
+            st.markdown("### 📄 Documento de reserva")
+        with col_recarga:
+            if st.button("🔄 Recargar datos",
+                         use_container_width=True,
+                         key="doc_btn_recargar",
+                         help="Vuelve a cargar los datos de N.I.F., Nº de "
+                              "documento y Fecha de emisión de la reserva "
+                              "seleccionada arriba."):
+                for k in (f"doc_nif_edit_{id_sel}",
+                          f"doc_nro_edit_{id_sel}",
+                          f"doc_fecha_edit_{id_sel}"):
+                    if k in st.session_state:
+                        del st.session_state[k]
+                st.rerun()
 
         # Detectamos si las columnas ya existen en BD
         _col_nif_existe = ("nif" in df.columns)
