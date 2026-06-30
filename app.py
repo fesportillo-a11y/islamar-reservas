@@ -847,14 +847,39 @@ def generar_factura_pdf(reserva: dict) -> bytes:
 
     story = []
 
-    # ── Cabecera del emisor (izquierda) ───────────────────────────────
+    # ── Cabecera del emisor (izquierda) con logo si esta disponible ──
     emisor_html = (
-        f"<b><font color='#1F4E79' size='18'>{EMISOR_FACTURA['razon_social']}</font></b><br/>"
         f"<font size='9' color='#444'>{EMISOR_FACTURA['direccion']}<br/>"
         f"{EMISOR_FACTURA['cp_localidad']}<br/>"
         f"<b>C.I.F.: {EMISOR_FACTURA['cif']}</b></font>"
     )
-    story.append(Paragraph(emisor_html, estilo_emisor_sub))
+    try:
+        from reportlab.platypus import Image as RLImage
+        import os
+        _logo_path = "logo.png"
+        if os.path.exists(_logo_path):
+            # Logo + texto del emisor en una tabla a dos columnas (mismo
+            # layout que el PDF tipo): logo arriba, datos debajo.
+            logo_img = RLImage(_logo_path, width=55*mm, height=22*mm)
+            logo_img.hAlign = "LEFT"
+            story.append(logo_img)
+            story.append(Spacer(1, 2*mm))
+            story.append(Paragraph(emisor_html, estilo_emisor_sub))
+        else:
+            # Fallback texto si el logo no existe en el deploy
+            emisor_html_full = (
+                f"<b><font color='#1F4E79' size='18'>"
+                f"{EMISOR_FACTURA['razon_social']}</font></b><br/>"
+                + emisor_html
+            )
+            story.append(Paragraph(emisor_html_full, estilo_emisor_sub))
+    except Exception:
+        emisor_html_full = (
+            f"<b><font color='#1F4E79' size='18'>"
+            f"{EMISOR_FACTURA['razon_social']}</font></b><br/>"
+            + emisor_html
+        )
+        story.append(Paragraph(emisor_html_full, estilo_emisor_sub))
     story.append(Spacer(1, 14*mm))
 
     # ── Datos del cliente (derecha) ────────────────────────────────────
