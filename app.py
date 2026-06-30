@@ -2695,11 +2695,13 @@ elif seccion == "✏️ Editar reserva":
 
         # ── Casilla para el NIF dentro del propio panel (asi no hay que
         #    ir arriba al formulario, guardar y volver a bajar) ───────
+        # La key incluye id_sel para que al cambiar de reserva el campo
+        # se refresque con el valor de la nueva.
         nuevo_nif_doc = st.text_input(
             "🪪 N.I.F. del cliente",
             value=nif_actual,
             placeholder="Ej. 50816337Z",
-            key="doc_nif_edit",
+            key=f"doc_nif_edit_{id_sel}",
             help=("Imprescindible para emitir el documento. Se guarda "
                   "en BD cuando pulsas 'Emitir documento'."),
         )
@@ -2709,7 +2711,7 @@ elif seccion == "✏️ Editar reserva":
             nuevo_nro_doc = st.text_input(
                 "Nº de documento",
                 value=_sugerido_nro,
-                key="doc_nro_edit",
+                key=f"doc_nro_edit_{id_sel}",
                 help=("Editable. Por defecto se usa el **Nº de reserva** "
                       "del cliente (lo que aparece arriba en el formulario). "
                       "Si la reserva no tiene Nº, se sugiere el siguiente "
@@ -2720,7 +2722,7 @@ elif seccion == "✏️ Editar reserva":
                 "Fecha de emisión",
                 value=_ff_date,
                 format="DD/MM/YYYY",
-                key="doc_fecha_edit",
+                key=f"doc_fecha_edit_{id_sel}",
                 help="Editable. Por defecto la fecha de hoy.",
             )
 
@@ -5553,11 +5555,15 @@ elif seccion == "📄 Documento de reserva":
         else:
             _sug_nro = siguiente_nro_factura()
 
+        # Las keys incluyen el id de la reserva para que cuando el usuario
+        # cambie de cliente en el selector, los inputs se refresquen con
+        # el valor sugerido nuevo (en vez de quedarse con el del cliente
+        # anterior por la memoria de session_state de Streamlit).
         nuevo_nif = st.text_input(
             "🪪 N.I.F. del cliente",
             value=nif_doc_actual,
             placeholder="Ej. 50816337Z",
-            key="doc2_nif",
+            key=f"doc2_nif_{id_doc}",
             help="Imprescindible para emitir el documento. Se guarda al "
                  "pulsar 'Emitir documento'.",
         )
@@ -5567,7 +5573,7 @@ elif seccion == "📄 Documento de reserva":
             nuevo_nro = st.text_input(
                 "Nº de documento",
                 value=_sug_nro,
-                key="doc2_nro",
+                key=f"doc2_nro_{id_doc}",
                 help=("Editable. Por defecto se usa el **Nº de reserva** "
                       "del cliente. Si no existe, se sugiere el siguiente "
                       "correlativo automático tipo `001-26`."),
@@ -5577,7 +5583,7 @@ elif seccion == "📄 Documento de reserva":
                 "Fecha de emisión",
                 value=_ff_d,
                 format="DD/MM/YYYY",
-                key="doc2_fecha",
+                key=f"doc2_fecha_{id_doc}",
             )
 
         # ── Resumen rápido de la reserva (info contextual) ──
