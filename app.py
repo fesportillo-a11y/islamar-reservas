@@ -714,6 +714,255 @@ def generar_pdf_raquel(df, f_desde=None, f_hasta=None) -> bytes:
     doc.build(story, onFirstPage=_pie, onLaterPages=_pie)
     return buf.getvalue()
 
+# ─────────────────────────────────────────────
+# FACTURAS / DOCUMENTOS DE RESERVA
+# ─────────────────────────────────────────────
+EMISOR_FACTURA = {
+    "razon_social": "ESTEASUR 2015, S.L.",
+    "direccion":    "C/ Doña María Coronel, nº 24",
+    "cp_localidad": "41940 - Tomares (Sevilla)",
+    "cif":          "B-90213372",
+}
+
+DATOS_BANCARIOS = [
+    "BANKINTER  ES78 0128 0702 6501 0004 9994",
+    "SANTANDER  ES22 0075 3141 6106 0549 3915",
+]
+
+_MESES_ES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
+             "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
+
+def _fecha_larga_es(d: date) -> str:
+    """Devuelve '30 de Junio de 2.026' al estilo de la factura tipo."""
+    if not d:
+        return ""
+    anio = f"{d.year:,}".replace(",", ".")
+    return f"{d.day:02d} de {_MESES_ES[d.month-1]} de {anio}"
+
+def _fmt_eur_fac(v: float) -> str:
+    """1234.5 → '1.234,50'"""
+    try:
+        s = f"{float(v):,.2f}"
+        return s.replace(",", "X").replace(".", ",").replace("X", ".")
+    except Exception:
+        return "0,00"
+
+def siguiente_nro_factura(anio: int = None) -> str:
+    """Calcula el siguiente correlativo de factura tipo 'NNN-YY'.
+    Busca en BD el max nro_factura para el año actual y suma 1.
+    Si no hay ninguno, empieza en 001-YY."""
+    if anio is None:
+        anio = datetime.now().year
+    sufijo = f"-{str(anio)[-2:]}"
+    try:
+        resp = supabase.table("reservas").select("nro_factura").execute()
+        nros = [str(r.get("nro_factura") or "") for r in (resp.data or [])]
+    except Exception:
+        nros = []
+    max_n = 0
+    for nf in nros:
+        m = re.match(r"^\s*(\d{1,4})\s*-\s*(\d{2})\s*$", nf)
+        if m and int(m.group(2)) == int(str(anio)[-2:]):
+            max_n = max(max_n, int(m.group(1)))
+    return f"{max_n + 1:03d}{sufijo}"
+
+def _descripcion_concepto(reserva: dict) -> str:
+    """Construye la frase del CONCEPTO de la factura a partir de los
+    datos de una reserva (apartamento, fechas)."""
+    apto = str(reserva.get("apartamento", "") or "").strip()
+    apto_up = apto.upper()
+    if "ESTUDIO" in apto_up:
+        tipo = "un estudio"
+    elif "2 DORM" in apto_up:
+        tipo = "un apartamento de dos dormitorios"
+    elif "1 DORM" in apto_up:
+        tipo = "un apartamento de un dormitorio"
+    else:
+        tipo = "un apartamento"
+    f_e = parse_date_safe(reserva.get("entrada", ""))
+    f_s = parse_date_safe(reserva.get("salida", ""))
+    frase = (
+        f"Reserva de {tipo} en Islantilla en Edificio Islamar Golf "
+        f"Avda. Río Frío s/n"
+    )
+    if f_e and f_s:
+        frase += (
+            f" con entrada el día {f_e.day:02d} de {_MESES_ES[f_e.month-1]} "
+            f"de {f_e.year:,}".replace(",", ".")
+            + f" y salida el día {f_s.day:02d} de {_MESES_ES[f_s.month-1]} "
+            f"de {f_s.year:,}".replace(",", ".")
+        )
+    return frase + "."
+
+def generar_factura_pdf(reserva: dict) -> bytes:
+    """Genera el PDF de la factura/documento de reserva para una reserva.
+    El formato replica el modelo tipo de ESTEASUR 2015 (sin IVA desglosado,
+    base imponible = neto, con datos bancarios y nota inferior)."""
+    if not _PDF_OK:
+        return b""
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=20*mm, rightMargin=20*mm,
+        topMargin=18*mm, bottomMargin=18*mm,
+        title=f"Factura {reserva.get('nro_factura', '')}",
+        author="ESTEASUR 2015, S.L.",
+    )
+
+    azul = _rl_colors.HexColor("#1F4E79")
+    gris = _rl_colors.HexColor("#444444")
+
+    estilo_emisor_titulo = ParagraphStyle(
+        "EmisorTit", fontName="Helvetica-Bold", fontSize=18,
+        textColor=azul, alignment=TA_LEFT, spaceAfter=2,
+    )
+    estilo_emisor_sub = ParagraphStyle(
+        "EmisorSub", fontName="Helvetica", fontSize=9,
+        textColor=gris, alignment=TA_LEFT, leading=11,
+    )
+    estilo_cliente = ParagraphStyle(
+        "Cliente", fontName="Helvetica-Bold", fontSize=11,
+        alignment=TA_RIGHT, textColor=_rl_colors.black, spaceAfter=2,
+    )
+    estilo_label_negrita = ParagraphStyle(
+        "Lbl", fontName="Helvetica-Bold", fontSize=11,
+        alignment=TA_LEFT,
+    )
+    estilo_valor = ParagraphStyle(
+        "Val", fontName="Helvetica", fontSize=11, alignment=TA_LEFT,
+    )
+    estilo_resaltado = ParagraphStyle(
+        "Res", fontName="Helvetica-Bold", fontSize=11,
+        backColor=_rl_colors.HexColor("#FFF200"), alignment=TA_LEFT,
+    )
+    estilo_concepto = ParagraphStyle(
+        "Concepto", fontName="Helvetica", fontSize=11,
+        alignment=TA_LEFT, leading=14,
+    )
+    estilo_nota_inf = ParagraphStyle(
+        "Nota", fontName="Helvetica", fontSize=9.5,
+        alignment=TA_LEFT, leading=13,
+    )
+
+    story = []
+
+    # ── Cabecera del emisor (izquierda) ───────────────────────────────
+    emisor_html = (
+        f"<b><font color='#1F4E79' size='18'>{EMISOR_FACTURA['razon_social']}</font></b><br/>"
+        f"<font size='9' color='#444'>{EMISOR_FACTURA['direccion']}<br/>"
+        f"{EMISOR_FACTURA['cp_localidad']}<br/>"
+        f"<b>C.I.F.: {EMISOR_FACTURA['cif']}</b></font>"
+    )
+    story.append(Paragraph(emisor_html, estilo_emisor_sub))
+    story.append(Spacer(1, 14*mm))
+
+    # ── Datos del cliente (derecha) ────────────────────────────────────
+    cli_nombre = str(reserva.get("nombre", "") or "").upper()
+    cli_nif    = str(reserva.get("nif", "") or "").strip().upper()
+    cli_html   = (
+        f"<para alignment='right'><b>{cli_nombre}</b><br/>"
+        f"<b>N.I.F.: {cli_nif}</b></para>"
+    )
+    story.append(Paragraph(cli_html, estilo_cliente))
+    story.append(Spacer(1, 18*mm))
+
+    # ── Datos del documento (Reserva nº + Fecha) ──────────────────────
+    nro_fac = str(reserva.get("nro_factura", "") or "")
+    f_fac_raw = reserva.get("fecha_factura", "") or ""
+    f_fac = parse_date_safe(f_fac_raw) or date.today()
+    fecha_larga = _fecha_larga_es(f_fac)
+
+    tabla_docnums = Table(
+        [
+            [Paragraph("<b>Reserva nº</b>", estilo_label_negrita),
+             Paragraph(f"<b>{nro_fac}</b>", estilo_resaltado)],
+            [Paragraph("<b>Fecha:</b>", estilo_label_negrita),
+             Paragraph(fecha_larga, estilo_valor)],
+        ],
+        colWidths=[35*mm, 100*mm],
+    )
+    tabla_docnums.setStyle(TableStyle([
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+        ("TOPPADDING", (0,0), (-1,-1), 2),
+    ]))
+    story.append(tabla_docnums)
+    story.append(Spacer(1, 12*mm))
+
+    # ── Concepto ─────────────────────────────────────────────────────
+    story.append(Paragraph("<b>CONCEPTO:</b>", estilo_label_negrita))
+    story.append(Spacer(1, 3*mm))
+    story.append(Paragraph(_descripcion_concepto(reserva), estilo_concepto))
+    story.append(Spacer(1, 16*mm))
+
+    # ── Totales (cuadro derecho) ─────────────────────────────────────
+    def _to_eur(v):
+        try:
+            s = str(v).replace("€", "").replace(" ", "").strip()
+            if s.count(",") and s.count("."):
+                s = s.replace(".", "").replace(",", ".")
+            elif s.count(","):
+                s = s.replace(",", ".")
+            return float(s) if s and s.lower() != "nan" else 0.0
+        except Exception:
+            return 0.0
+
+    base   = _to_eur(reserva.get("precio"))
+    pagado = _to_eur(reserva.get("pago_cta"))
+    resto  = _to_eur(reserva.get("resto_pdte"))
+    if resto <= 0 and pagado > 0 and base > 0 and pagado < base:
+        resto = base - pagado
+    if resto <= 0 and pagado <= 0:
+        resto = base
+    estado_up = str(reserva.get("estado_pago", "") or "").upper()
+    if "PAGADO" in estado_up and pagado <= 0:
+        pagado = base
+        resto  = 0.0
+
+    tabla_totales = Table(
+        [
+            ["Base Imponible", _fmt_eur_fac(base), "€"],
+            ["NETO",           _fmt_eur_fac(base), "€"],
+            ["PAGO A CUENTA",  _fmt_eur_fac(pagado), "€"],
+            ["RESTO PENDIENTE", _fmt_eur_fac(resto), "€"],
+        ],
+        colWidths=[55*mm, 35*mm, 10*mm],
+        hAlign="RIGHT",
+    )
+    tabla_totales.setStyle(TableStyle([
+        ("FONTNAME", (0,0), (-1,-1), "Helvetica"),
+        ("FONTSIZE", (0,0), (-1,-1), 11),
+        # NETO y RESTO PENDIENTE en negrita
+        ("FONTNAME", (0,1), (-1,1), "Helvetica-Bold"),
+        ("FONTNAME", (0,3), (-1,3), "Helvetica-Bold"),
+        ("ALIGN", (1,0), (1,-1), "RIGHT"),
+        ("ALIGN", (2,0), (2,-1), "LEFT"),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+        ("LINEABOVE", (0,1), (-1,1), 0.5, _rl_colors.black),
+        ("TOPPADDING",    (0,0), (-1,-1), 4),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+    ]))
+    story.append(tabla_totales)
+    story.append(Spacer(1, 10*mm))
+
+    # ── Forma de pago + datos bancarios ──────────────────────────────
+    pago_html = "<b>Forma de pago:</b> Transferencia bancaria.<br/>"
+    for cuenta in DATOS_BANCARIOS:
+        pago_html += f"{cuenta}<br/>"
+    story.append(Paragraph(pago_html, estilo_valor))
+    story.append(Spacer(1, 14*mm))
+
+    # ── Nota inferior ────────────────────────────────────────────────
+    story.append(Paragraph(
+        "Esta reserva sólo tendrá validez si el pago se realiza dentro "
+        "de los 2 días siguientes a la fecha del presente documento.",
+        estilo_nota_inf,
+    ))
+
+    doc.build(story)
+    return buf.getvalue()
+
 @st.cache_data(show_spinner=False, max_entries=2000)
 def traducir_a_espanol(texto: str) -> str:
     """Traduce un texto a español usando Google Translate (via deep-translator).
@@ -1312,7 +1561,11 @@ def cargar_reservas() -> pd.DataFrame:
 # Campos "opcionales": columnas que pueden no existir aún en la BD
 # (introducidas en migraciones posteriores). Si la inserción/actualización
 # falla porque la BD aún no tiene la columna, se reintenta sin esos campos.
-_CAMPOS_OPCIONALES_BD = ("adultos", "ninos", "forma_pago", "updated_at", "telefono")
+_CAMPOS_OPCIONALES_BD = (
+    "adultos", "ninos", "forma_pago", "updated_at", "telefono",
+    # Facturacion
+    "nif", "nro_factura", "fecha_factura",
+)
 
 def _payload_sin_opcionales(datos: dict) -> dict:
     return {k: v for k, v in datos.items() if k not in _CAMPOS_OPCIONALES_BD}
@@ -2056,6 +2309,11 @@ elif seccion == "➕ Nueva reserva":
                 placeholder="Ej. +34 600 000 000",
                 help="Teléfono del cliente (se mostrará en el Listado Raquel).",
             )
+            nif         = st.text_input(
+                "🪪 N.I.F. del cliente",
+                placeholder="Ej. 50816337Z",
+                help="Necesario para emitir factura / documento de reserva.",
+            )
             nro_reserva = st.text_input("Nº de reserva")
             apartamento = st.selectbox(
                 "Apartamento * (solo libres en esas fechas)",
@@ -2135,6 +2393,7 @@ elif seccion == "➕ Nueva reserva":
                 "adultos":     adultos,
                 "ninos":       ninos,
                 "telefono":    telefono,
+                "nif":         nif,
                 "precio":      precio,
                 "pago_cta":    pago_cta,
                 "fecha_ingreso": fecha_ing,
@@ -2244,6 +2503,12 @@ elif seccion == "✏️ Editar reserva":
                     placeholder="Ej. +34 600 000 000",
                     help="Teléfono del cliente (se mostrará en el Listado Raquel).",
                 )
+                nif         = st.text_input(
+                    "🪪 N.I.F. del cliente",
+                    value=_safe_str(reserva.get("nif")),
+                    placeholder="Ej. 50816337Z",
+                    help="Necesario para emitir factura/documento de reserva.",
+                )
                 nro_reserva = st.text_input("Nº de reserva",
                                             value=_safe_str(reserva.get("nro_reserva")))
                 apto_val    = _safe_str(reserva.get("apartamento"))
@@ -2316,7 +2581,7 @@ elif seccion == "✏️ Editar reserva":
                 "mes_num": mes_num(mes), "nombre": nombre, "apartamento": apartamento,
                 "dormitorios": dormitorios, "entrada": entrada_str, "salida": salida_str,
                 "noches": noches, "personas": personas, "adultos": adultos, "ninos": ninos,
-                "telefono": telefono, "precio": precio,
+                "telefono": telefono, "nif": nif, "precio": precio,
                 "pago_cta": pago_cta, "fecha_ingreso": fecha_ing, "resto_pdte": resto_pdte,
                 "estado_pago": estado_pago, "forma_pago": forma_pago,
                 "comentarios": comentarios,
@@ -2325,6 +2590,81 @@ elif seccion == "✏️ Editar reserva":
             st.success(f"✅ Reserva de **{nombre}** actualizada.")
             st.cache_resource.clear()
             st.rerun()
+
+        # ── Sección de facturación / documento de reserva ────────
+        st.markdown("---")
+        st.markdown("### 📄 Factura / documento de reserva")
+        nf_actual = _safe_str(reserva.get("nro_factura"))
+        ff_actual = _safe_str(reserva.get("fecha_factura"))
+        col_nf, col_ff = st.columns(2)
+        with col_nf:
+            if nf_actual:
+                st.text_input("Nº de factura",
+                              value=nf_actual, disabled=True,
+                              key="fac_nro_show")
+            else:
+                _siguiente = siguiente_nro_factura()
+                st.text_input(
+                    f"Nº de factura (próximo correlativo: {_siguiente})",
+                    value="(aún sin emitir)", disabled=True,
+                    key="fac_nro_show",
+                )
+        with col_ff:
+            st.text_input(
+                "Fecha emisión",
+                value=ff_actual or "(aún sin emitir)",
+                disabled=True, key="fac_fecha_show",
+            )
+
+        col_emit, col_pdf = st.columns(2)
+        with col_emit:
+            label_btn = ("📄 Emitir factura"
+                         if not nf_actual
+                         else "♻️ Re-emitir factura (nuevo número)")
+            if st.button(label_btn, type="primary",
+                         use_container_width=True, key="btn_emit_factura"):
+                if not _safe_str(reserva.get("nif")).strip():
+                    st.error("⚠️ Hace falta el N.I.F. del cliente para emitir factura. "
+                             "Edítalo arriba, guarda los cambios y vuelve a intentarlo.")
+                else:
+                    nuevo_nro = siguiente_nro_factura()
+                    hoy_iso   = date.today().isoformat()
+                    try:
+                        actualizar_reserva(id_sel, {
+                            "nro_factura":   nuevo_nro,
+                            "fecha_factura": hoy_iso,
+                        })
+                        st.success(
+                            f"✅ Factura **{nuevo_nro}** emitida "
+                            f"({_fecha_larga_es(date.today())}). "
+                            f"Pulsa 'Descargar PDF' para obtenerla."
+                        )
+                        st.cache_resource.clear()
+                        st.rerun()
+                    except Exception as ex:
+                        st.error(f"Error al emitir factura: {ex}")
+        with col_pdf:
+            if nf_actual and _PDF_OK:
+                # Generar PDF con los datos actuales (incluyendo num + fecha)
+                reserva_dict = reserva.to_dict() if hasattr(reserva, "to_dict") else dict(reserva)
+                try:
+                    pdf_fac_bytes = generar_factura_pdf(reserva_dict)
+                    st.download_button(
+                        "⬇️ Descargar PDF factura",
+                        data=pdf_fac_bytes,
+                        file_name=f"Factura_{nf_actual}_{_safe_str(reserva.get('nombre'))[:30].replace(' ', '_')}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True,
+                        key="btn_pdf_factura",
+                    )
+                except Exception as ex:
+                    st.error(f"Error al generar PDF: {ex}")
+            elif not nf_actual:
+                st.button("⬇️ Descargar PDF factura",
+                          disabled=True, use_container_width=True,
+                          help="Primero emite la factura para poder descargar el PDF.")
+            elif not _PDF_OK:
+                st.caption("(PDF no disponible: reportlab no instalado)")
 
         if eliminar:
             eliminar_reserva(id_sel)
