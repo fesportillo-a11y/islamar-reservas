@@ -22,9 +22,9 @@ try:
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import mm
-    from reportlab.lib.enums import TA_LEFT, TA_CENTER
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
     from reportlab.platypus import (
-        SimpleDocTemplate, Table, TableStyle, Paragraph
+        SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
     )
     from xml.sax.saxutils import escape as _xml_escape
     _PDF_OK = True
