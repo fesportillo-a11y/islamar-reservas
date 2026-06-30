@@ -291,11 +291,11 @@ detecta que la columna no existe y guarda el resto de campos sin error).
 
 ---
 
-## PASO 7.4 · Habilitar la emisión de facturas (opcional)
+## PASO 7.4 · Habilitar la emisión del documento de reserva (opcional)
 
-Para que la app pueda emitir el documento de reserva / factura PDF tipo
-ESTEASUR (con número correlativo automático tipo `040-26`), añade estas
-tres columnas a la tabla `reservas`:
+Para que la app pueda emitir el documento de reserva PDF tipo ESTEASUR
+(con número correlativo automático tipo `040-26`), añade estas tres
+columnas a la tabla `reservas`:
 
 ```sql
 ALTER TABLE reservas ADD COLUMN IF NOT EXISTS nif           TEXT;
@@ -304,20 +304,22 @@ ALTER TABLE reservas ADD COLUMN IF NOT EXISTS fecha_factura TEXT;
 NOTIFY pgrst, 'reload schema';
 ```
 
-Después, en **✏️ Editar reserva** verás una sección "📄 Factura / documento
-de reserva" con:
+Después, en **✏️ Editar reserva** verás una sección "📄 Documento de
+reserva" con:
 
 - Campo **N.I.F. del cliente** (obligatorio para emitir).
-- Botón **📄 Emitir factura** → asigna el siguiente número correlativo
-  (`NNN-YY` donde `YY` son los 2 últimos dígitos del año) y guarda la
-  fecha de emisión.
-- Botón **⬇️ Descargar PDF factura** → genera el PDF con el formato tipo
-  ESTEASUR (datos del emisor + cliente, concepto descriptivo de la
-  reserva, base imponible, pago a cuenta, resto pendiente, datos
+- Campos **Nº de documento** y **Fecha de emisión** editables. El nº se
+  pre-rellena con el próximo correlativo automático (`NNN-YY` donde `YY`
+  son los 2 últimos dígitos del año) y la fecha con hoy, pero puedes
+  poner los valores que quieras.
+- Botón **📄 Emitir documento** → guarda el nº y la fecha en BD.
+- Botón **⬇️ Descargar PDF documento** → genera el PDF con el formato
+  tipo ESTEASUR (logo, datos del emisor + cliente, concepto descriptivo
+  de la reserva, base imponible, pago a cuenta, resto pendiente, datos
   bancarios y nota inferior).
 
 Sin estos campos en BD la sección aparece pero no podrá persistir el nº
-de factura ni la fecha de emisión.
+de documento ni la fecha de emisión.
 
 ---
 

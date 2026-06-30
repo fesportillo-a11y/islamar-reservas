@@ -806,7 +806,7 @@ def generar_factura_pdf(reserva: dict) -> bytes:
         buf, pagesize=A4,
         leftMargin=20*mm, rightMargin=20*mm,
         topMargin=18*mm, bottomMargin=18*mm,
-        title=f"Factura {reserva.get('nro_factura', '')}",
+        title=f"Documento de reserva {reserva.get('nro_factura', '')}",
         author="ESTEASUR 2015, S.L.",
     )
 
@@ -858,9 +858,21 @@ def generar_factura_pdf(reserva: dict) -> bytes:
         import os
         _logo_path = "logo.png"
         if os.path.exists(_logo_path):
-            # Logo + texto del emisor en una tabla a dos columnas (mismo
-            # layout que el PDF tipo): logo arriba, datos debajo.
-            logo_img = RLImage(_logo_path, width=55*mm, height=22*mm)
+            # Calculamos el tamaño manteniendo la proporcion REAL del PNG
+            # para no distorsionarlo ni perder calidad. Anchura objetivo
+            # 65mm (el alto se ajusta segun la proporcion nativa).
+            display_w = 65 * mm
+            display_h = 28 * mm  # fallback razonable si PIL no esta
+            try:
+                from PIL import Image as PILImage
+                _pim = PILImage.open(_logo_path)
+                _w, _h = _pim.size
+                _pim.close()
+                if _w > 0:
+                    display_h = display_w * (_h / _w)
+            except Exception:
+                pass
+            logo_img = RLImage(_logo_path, width=display_w, height=display_h)
             logo_img.hAlign = "LEFT"
             story.append(logo_img)
             story.append(Spacer(1, 2*mm))
@@ -880,7 +892,7 @@ def generar_factura_pdf(reserva: dict) -> bytes:
             + emisor_html
         )
         story.append(Paragraph(emisor_html_full, estilo_emisor_sub))
-    story.append(Spacer(1, 14*mm))
+    story.append(Spacer(1, 10*mm))
 
     # ── Datos del cliente (derecha) ────────────────────────────────────
     cli_nombre = str(reserva.get("nombre", "") or "").upper()
@@ -2616,16 +2628,16 @@ elif seccion == "✏️ Editar reserva":
             st.cache_resource.clear()
             st.rerun()
 
-        # ── Sección de facturación / documento de reserva ────────
+        # ── Sección de documento de reserva ──────────────────────
         st.markdown("---")
-        st.markdown("### 📄 Factura / documento de reserva")
+        st.markdown("### 📄 Documento de reserva")
 
-        # Detectamos si las columnas de factura ya existen en BD
+        # Detectamos si las columnas ya existen en BD
         _col_nif_existe = ("nif" in df.columns)
         _col_nro_existe = ("nro_factura" in df.columns)
         if not (_col_nif_existe and _col_nro_existe):
             st.error(
-                "⚠️ Las columnas de factura aún no están creadas en la BD. "
+                "⚠️ Las columnas necesarias aún no están creadas en la BD. "
                 "Ve a **Supabase → SQL Editor → New query** y ejecuta:\n\n"
                 "```sql\n"
                 "ALTER TABLE reservas ADD COLUMN IF NOT EXISTS nif           TEXT;\n"
@@ -2638,35 +2650,40 @@ elif seccion == "✏️ Editar reserva":
 
         nf_actual = _safe_str(reserva.get("nro_factura"))
         ff_actual = _safe_str(reserva.get("fecha_factura"))
+        # Para el date_input intentamos parsear la fecha de BD; si no se puede
+        # usamos hoy como valor inicial.
+        _ff_date  = parse_date_safe(ff_actual) or date.today()
+        # Sugerencia del próximo correlativo (solo si no hay uno aún)
+        _sugerido_nro = nf_actual if nf_actual else siguiente_nro_factura()
+
         col_nf, col_ff = st.columns(2)
         with col_nf:
-            if nf_actual:
-                st.text_input("Nº de factura",
-                              value=nf_actual, disabled=True,
-                              key="fac_nro_show")
-            else:
-                _siguiente = siguiente_nro_factura()
-                st.text_input(
-                    f"Nº de factura (próximo correlativo: {_siguiente})",
-                    value="(aún sin emitir)", disabled=True,
-                    key="fac_nro_show",
-                )
+            nuevo_nro_doc = st.text_input(
+                "Nº de documento",
+                value=_sugerido_nro,
+                key="doc_nro_edit",
+                help=("Editable. El correlativo automático se sugiere "
+                      "por defecto pero puedes poner el que quieras "
+                      "(ej. '040-26')."),
+            )
         with col_ff:
-            st.text_input(
-                "Fecha emisión",
-                value=ff_actual or "(aún sin emitir)",
-                disabled=True, key="fac_fecha_show",
+            nuevo_fecha_doc = st.date_input(
+                "Fecha de emisión",
+                value=_ff_date,
+                format="DD/MM/YYYY",
+                key="doc_fecha_edit",
+                help="Editable. Por defecto la fecha de hoy.",
             )
 
         col_emit, col_pdf = st.columns(2)
         with col_emit:
-            label_btn = ("📄 Emitir factura"
+            label_btn = ("📄 Emitir documento"
                          if not nf_actual
-                         else "♻️ Re-emitir factura (nuevo número)")
+                         else "💾 Guardar nº y fecha")
             if st.button(label_btn, type="primary",
-                         use_container_width=True, key="btn_emit_factura",
+                         use_container_width=True, key="btn_emit_documento",
                          disabled=not (_col_nif_existe and _col_nro_existe)):
-                # Recargamos los datos frescos por si acaba de guardar cambios
+                # Recargamos NIF directo de BD por si acaba de guardar
                 nif_bd_fresco = ""
                 try:
                     _resp = supabase.table("reservas").select("nif").eq(
@@ -2679,49 +2696,58 @@ elif seccion == "✏️ Editar reserva":
                 if not nif_bd_fresco.strip():
                     st.error(
                         "⚠️ Hace falta el **N.I.F.** del cliente para emitir "
-                        "factura.\n\n"
+                        "el documento.\n\n"
                         "1. Rellena el campo **🪪 N.I.F. del cliente** arriba.\n"
-                        "2. Pulsa **💾 Guardar cambios** (es el botón azul "
-                        "grande, no el de Emitir).\n"
-                        "3. Después vuelve a pulsar **📄 Emitir factura**."
+                        "2. Pulsa **💾 Guardar cambios** (botón azul grande "
+                        "de la sección de la reserva).\n"
+                        "3. Después vuelve a pulsar **📄 Emitir documento**."
                     )
+                elif not str(nuevo_nro_doc or "").strip():
+                    st.error("⚠️ El número de documento no puede estar vacío.")
                 else:
-                    nuevo_nro = siguiente_nro_factura()
-                    hoy_iso   = date.today().isoformat()
                     try:
                         actualizar_reserva(id_sel, {
-                            "nro_factura":   nuevo_nro,
-                            "fecha_factura": hoy_iso,
+                            "nro_factura":   str(nuevo_nro_doc).strip(),
+                            "fecha_factura": nuevo_fecha_doc.isoformat(),
                         })
                         st.success(
-                            f"✅ Factura **{nuevo_nro}** emitida "
-                            f"({_fecha_larga_es(date.today())}). "
-                            f"Pulsa 'Descargar PDF' para obtenerla."
+                            f"✅ Documento **{nuevo_nro_doc}** "
+                            f"({_fecha_larga_es(nuevo_fecha_doc)}) guardado. "
+                            f"Pulsa **⬇️ Descargar PDF** para obtenerlo."
                         )
                         st.cache_resource.clear()
                         st.rerun()
                     except Exception as ex:
-                        st.error(f"Error al emitir factura: {ex}")
+                        st.error(f"Error al guardar el documento: {ex}")
         with col_pdf:
             if nf_actual and _PDF_OK:
-                # Generar PDF con los datos actuales (incluyendo num + fecha)
-                reserva_dict = reserva.to_dict() if hasattr(reserva, "to_dict") else dict(reserva)
+                # Generar PDF on-demand con los valores actualmente
+                # mostrados en los campos (asi se reflejan cambios sin
+                # tener que pulsar Guardar primero).
+                reserva_dict = (reserva.to_dict()
+                                if hasattr(reserva, "to_dict") else dict(reserva))
+                reserva_dict["nro_factura"]   = str(nuevo_nro_doc).strip()
+                reserva_dict["fecha_factura"] = nuevo_fecha_doc.isoformat()
                 try:
                     pdf_fac_bytes = generar_factura_pdf(reserva_dict)
+                    nombre_arch = (
+                        _safe_str(reserva.get("nombre"))[:30].replace(" ", "_")
+                    )
                     st.download_button(
-                        "⬇️ Descargar PDF factura",
+                        "⬇️ Descargar PDF documento",
                         data=pdf_fac_bytes,
-                        file_name=f"Factura_{nf_actual}_{_safe_str(reserva.get('nombre'))[:30].replace(' ', '_')}.pdf",
+                        file_name=f"Documento_Reserva_{nuevo_nro_doc}_{nombre_arch}.pdf",
                         mime="application/pdf",
                         use_container_width=True,
-                        key="btn_pdf_factura",
+                        key="btn_pdf_documento",
                     )
                 except Exception as ex:
                     st.error(f"Error al generar PDF: {ex}")
             elif not nf_actual:
-                st.button("⬇️ Descargar PDF factura",
+                st.button("⬇️ Descargar PDF documento",
                           disabled=True, use_container_width=True,
-                          help="Primero emite la factura para poder descargar el PDF.")
+                          help="Primero pulsa 'Emitir documento' para "
+                               "guardar el nº y la fecha en BD.")
             elif not _PDF_OK:
                 st.caption("(PDF no disponible: reportlab no instalado)")
 
