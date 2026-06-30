@@ -5530,12 +5530,31 @@ elif seccion == "📄 Documento de reserva":
         else:
             opciones_f = opciones_doc
 
-        sel = st.selectbox(
-            "Selecciona la reserva:", list(opciones_f.keys()),
-            key="doc_select",
-        )
+        col_sel, col_load = st.columns([4, 1])
+        with col_sel:
+            sel = st.selectbox(
+                "Selecciona la reserva:", list(opciones_f.keys()),
+                key="doc_select",
+            )
         id_doc = opciones_f[sel]
         reserva_doc = df[df["id"] == id_doc].iloc[0]
+
+        with col_load:
+            st.write("")  # alinear verticalmente con el selectbox
+            st.write("")
+            if st.button("🔄 Cargar reserva",
+                         use_container_width=True,
+                         key="doc_btn_cargar",
+                         help="Carga (o recarga) los datos del cliente seleccionado "
+                              "en los campos N.I.F., Nº de documento y Fecha."):
+                # Limpiar el session_state de los inputs para forzar que
+                # se rellenen con los valores nuevos de la reserva.
+                for k in (f"doc2_nif_{id_doc}",
+                          f"doc2_nro_{id_doc}",
+                          f"doc2_fecha_{id_doc}"):
+                    if k in st.session_state:
+                        del st.session_state[k]
+                st.rerun()
 
         st.markdown("---")
 
