@@ -2650,11 +2650,23 @@ elif seccion == "✏️ Editar reserva":
 
         nf_actual = _safe_str(reserva.get("nro_factura"))
         ff_actual = _safe_str(reserva.get("fecha_factura"))
+        nif_actual = _safe_str(reserva.get("nif"))
         # Para el date_input intentamos parsear la fecha de BD; si no se puede
         # usamos hoy como valor inicial.
         _ff_date  = parse_date_safe(ff_actual) or date.today()
         # Sugerencia del próximo correlativo (solo si no hay uno aún)
         _sugerido_nro = nf_actual if nf_actual else siguiente_nro_factura()
+
+        # ── Casilla para el NIF dentro del propio panel (asi no hay que
+        #    ir arriba al formulario, guardar y volver a bajar) ───────
+        nuevo_nif_doc = st.text_input(
+            "🪪 N.I.F. del cliente",
+            value=nif_actual,
+            placeholder="Ej. 50816337Z",
+            key="doc_nif_edit",
+            help=("Imprescindible para emitir el documento. Se guarda "
+                  "en BD cuando pulsas 'Emitir documento'."),
+        )
 
         col_nf, col_ff = st.columns(2)
         with col_nf:
@@ -2679,34 +2691,20 @@ elif seccion == "✏️ Editar reserva":
         with col_emit:
             label_btn = ("📄 Emitir documento"
                          if not nf_actual
-                         else "💾 Guardar nº y fecha")
+                         else "💾 Guardar cambios del documento")
             if st.button(label_btn, type="primary",
                          use_container_width=True, key="btn_emit_documento",
                          disabled=not (_col_nif_existe and _col_nro_existe)):
-                # Recargamos NIF directo de BD por si acaba de guardar
-                nif_bd_fresco = ""
-                try:
-                    _resp = supabase.table("reservas").select("nif").eq(
-                        "id", int(id_sel)).execute()
-                    if _resp.data:
-                        nif_bd_fresco = _safe_str(_resp.data[0].get("nif"))
-                except Exception:
-                    nif_bd_fresco = _safe_str(reserva.get("nif"))
-
-                if not nif_bd_fresco.strip():
-                    st.error(
-                        "⚠️ Hace falta el **N.I.F.** del cliente para emitir "
-                        "el documento.\n\n"
-                        "1. Rellena el campo **🪪 N.I.F. del cliente** arriba.\n"
-                        "2. Pulsa **💾 Guardar cambios** (botón azul grande "
-                        "de la sección de la reserva).\n"
-                        "3. Después vuelve a pulsar **📄 Emitir documento**."
-                    )
+                nif_in = str(nuevo_nif_doc or "").strip()
+                if not nif_in:
+                    st.error("⚠️ Hace falta el **N.I.F.** del cliente en "
+                             "la casilla de arriba para emitir el documento.")
                 elif not str(nuevo_nro_doc or "").strip():
                     st.error("⚠️ El número de documento no puede estar vacío.")
                 else:
                     try:
                         actualizar_reserva(id_sel, {
+                            "nif":           nif_in,
                             "nro_factura":   str(nuevo_nro_doc).strip(),
                             "fecha_factura": nuevo_fecha_doc.isoformat(),
                         })
@@ -2720,12 +2718,16 @@ elif seccion == "✏️ Editar reserva":
                     except Exception as ex:
                         st.error(f"Error al guardar el documento: {ex}")
         with col_pdf:
-            if nf_actual and _PDF_OK:
-                # Generar PDF on-demand con los valores actualmente
-                # mostrados en los campos (asi se reflejan cambios sin
-                # tener que pulsar Guardar primero).
+            # PDF disponible si hay NIF + nº (en BD o pendientes de guardar).
+            # Lo generamos al vuelo con los valores actuales de los campos
+            # para que se refleje cualquier edicion sin tener que Guardar.
+            puede_pdf = (bool(str(nuevo_nif_doc or "").strip())
+                         and bool(str(nuevo_nro_doc or "").strip())
+                         and _PDF_OK)
+            if puede_pdf:
                 reserva_dict = (reserva.to_dict()
                                 if hasattr(reserva, "to_dict") else dict(reserva))
+                reserva_dict["nif"]           = str(nuevo_nif_doc).strip()
                 reserva_dict["nro_factura"]   = str(nuevo_nro_doc).strip()
                 reserva_dict["fecha_factura"] = nuevo_fecha_doc.isoformat()
                 try:
@@ -2743,13 +2745,15 @@ elif seccion == "✏️ Editar reserva":
                     )
                 except Exception as ex:
                     st.error(f"Error al generar PDF: {ex}")
-            elif not nf_actual:
-                st.button("⬇️ Descargar PDF documento",
-                          disabled=True, use_container_width=True,
-                          help="Primero pulsa 'Emitir documento' para "
-                               "guardar el nº y la fecha en BD.")
             elif not _PDF_OK:
                 st.caption("(PDF no disponible: reportlab no instalado)")
+            else:
+                st.button(
+                    "⬇️ Descargar PDF documento",
+                    disabled=True, use_container_width=True,
+                    help="Rellena N.I.F. y Nº de documento arriba para "
+                         "poder descargar el PDF.",
+                )
 
         if eliminar:
             eliminar_reserva(id_sel)
