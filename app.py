@@ -4525,6 +4525,66 @@ elif seccion == "📋 Listado Raquel":
                 return str(total) if total else ""
             return f"{total} ({adultos} ad + {ninos} niños)"
 
+        # Patron de regex para detectar la cabecera de pago al guardar
+        # (para no escribir literalmente "💰 Pagado…" en BD).
+        _PAGO_PREFIJO_RE = re.compile(
+            r'^\s*(?:✅\s*PAGADO|⏳\s*Pendiente|💰\s*Pagado)[^\n|]*'
+            r'(?:\s*\|\s*|\s*\n+\s*)?',
+            re.IGNORECASE,
+        )
+
+        def _strip_pago_prefijo(texto: str) -> str:
+            """Quita la cabecera de pago si esta presente, para no
+            re-guardarla en BD (se re-calcula dinamicamente)."""
+            if not texto:
+                return ""
+            return _PAGO_PREFIJO_RE.sub("", str(texto)).strip()
+
+        def _to_eur(v) -> float:
+            try:
+                s = str(v).replace("€", "").replace(" ", "").strip()
+                if not s or s.lower() == "nan":
+                    return 0.0
+                # Heuristica para precios "1.234,56" o "1234.56" o "1234,56"
+                if s.count(",") and s.count("."):
+                    s = s.replace(".", "").replace(",", ".")
+                elif s.count(","):
+                    s = s.replace(",", ".")
+                return float(s)
+            except Exception:
+                return 0.0
+
+        def _fmt_eur(v: float) -> str:
+            s = f"{v:.2f}".replace(".", ",")
+            return f"{s}€"
+
+        def _pago_info_str(primera, apto_str: str) -> str:
+            """Resumen de pago para mostrar al inicio de Peticiones.
+            Solo aplica a reservas DIRECTAS o en apartamentos de JUANMA
+            (las de Booking en aptos propios las cobra Booking)."""
+            fuente_str = str(primera.get("fuente", "") or "").upper().strip()
+            apto_up    = apto_str.upper() if apto_str else ""
+            es_juanma  = any(a.upper() in apto_up for a in APTOS_JUANMA)
+            es_directa = (fuente_str == "DIRECTA")
+            if not (es_directa or es_juanma):
+                return ""
+            precio = _to_eur(primera.get("precio"))
+            pagado = _to_eur(primera.get("pago_cta"))
+            resto  = _to_eur(primera.get("resto_pdte"))
+            if precio <= 0 and pagado <= 0 and resto <= 0:
+                return ""
+            estado_up = str(primera.get("estado_pago", "") or "").upper()
+            # Si BD no trae resto pero sí pagado y precio, lo calculamos
+            if resto <= 0 and precio > 0 and pagado > 0 and pagado < precio:
+                resto = precio - pagado
+            if precio > 0 and (pagado >= precio - 0.01 or "PAGADO" in estado_up):
+                return f"✅ PAGADO {_fmt_eur(precio)}"
+            if pagado <= 0 and resto > 0:
+                return f"⏳ Pendiente {_fmt_eur(resto if resto > 0 else precio)}"
+            if pagado <= 0 and precio > 0:
+                return f"⏳ Pendiente {_fmt_eur(precio)}"
+            return f"💰 Pagado {_fmt_eur(pagado)} · Pendiente {_fmt_eur(resto)}"
+
         def _ts(v):
             """Parsea timestamps ISO 8601 (created_at / updated_at) de Supabase."""
             if v is None or (isinstance(v, float) and pd.isna(v)) or v == "":
@@ -4623,7 +4683,16 @@ elif seccion == "📋 Listado Raquel":
                 # mostramos las peticiones sin él.
                 if not telefono_val:
                     telefono_val, peticiones_raw = _extraer_telefono(peticiones_raw)
+                # Limpiamos posible prefijo de pago de una sesion anterior
+                peticiones_raw = _strip_pago_prefijo(peticiones_raw)
                 peticiones_es  = traducir_a_espanol(peticiones_raw)
+                # Prepend resumen de pago (solo DIRECTAS o JUANMA)
+                pago_info_txt = _pago_info_str(primera, apto_str)
+                if pago_info_txt:
+                    if peticiones_es:
+                        peticiones_es = f"{pago_info_txt} | {peticiones_es}"
+                    else:
+                        peticiones_es = pago_info_txt
 
                 filas_raquel.append({
                     "Estado":      _estado_grupo(grupo),
@@ -4654,7 +4723,11 @@ elif seccion == "📋 Listado Raquel":
             "**multi-apartamento** escribe los nombres exactos separados por "
             "`+ ` (ej. `APTO 2 - 1 DORM + APTO 215 - 2 DORM`). Las fechas en "
             "formato **DD/MM/YYYY**. Al guardar se valida que no haya "
-            "solapamientos con otras reservas. Pulsa **💾 Guardar cambios**."
+            "solapamientos con otras reservas. Pulsa **💾 Guardar cambios**.  "
+            "💡 El prefijo **✅ PAGADO / 💰 Pagado X · Pendiente Y / ⏳ Pendiente** "
+            "que aparece al inicio de las peticiones (solo en reservas "
+            "**DIRECTAS** o de **JUANMA**) se calcula automáticamente desde "
+            "los importes — no se guarda como texto."
         )
 
         edited_raquel = st.data_editor(
@@ -4740,8 +4813,11 @@ elif seccion == "📋 Listado Raquel":
                 df_actual = df  # snapshot pre-cambios para validar disponibilidad
 
                 for i in range(len(edited_raquel)):
-                    nuevo_pet  = str(edited_raquel.iloc[i]["Peticiones"] or "")
-                    antiguo_pet = str(peticiones_orig[i] or "")
+                    # Quitamos el prefijo "💰/✅/⏳ Pagado..." si el usuario lo
+                    # ha dejado en el texto (es informativo, no se guarda).
+                    nuevo_pet  = _strip_pago_prefijo(
+                        str(edited_raquel.iloc[i]["Peticiones"] or ""))
+                    antiguo_pet = _strip_pago_prefijo(str(peticiones_orig[i] or ""))
                     nuevo_tel  = str(edited_raquel.iloc[i].get("Teléfono", "") or "").strip()
                     antiguo_tel = str(telefonos_orig[i] or "").strip()
                     nuevo_cli  = str(edited_raquel.iloc[i].get("Cliente", "") or "").strip()
