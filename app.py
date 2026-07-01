@@ -747,10 +747,19 @@ def _fmt_eur_fac(v: float) -> str:
     except Exception:
         return "0,00"
 
+# Nº inicial de la numeracion de documento por año. Sirve para arrancar
+# el correlativo desde un numero distinto de 1 cuando en un año ya se han
+# emitido documentos fuera del sistema (ej. en 2026 ya llevaban emitidas
+# 40 facturas manuales, asi que la primera generada por la app es la 041).
+NRO_INICIAL_POR_ANIO = {
+    2026: 41,
+}
+
 def siguiente_nro_factura(anio: int = None) -> str:
-    """Calcula el siguiente correlativo de factura tipo 'NNN-YY'.
-    Busca en BD el max nro_factura para el año actual y suma 1.
-    Si no hay ninguno, empieza en 001-YY."""
+    """Calcula el siguiente correlativo de documento tipo 'NNN-YY'.
+    Busca en BD el max nro_factura para el año dado y suma 1. Si aun no
+    hay ninguno, empieza desde NRO_INICIAL_POR_ANIO[año] (o desde 1 si
+    ese año no esta configurado)."""
     if anio is None:
         anio = datetime.now().year
     sufijo = f"-{str(anio)[-2:]}"
@@ -764,7 +773,11 @@ def siguiente_nro_factura(anio: int = None) -> str:
         m = re.match(r"^\s*(\d{1,4})\s*-\s*(\d{2})\s*$", nf)
         if m and int(m.group(2)) == int(str(anio)[-2:]):
             max_n = max(max_n, int(m.group(1)))
-    return f"{max_n + 1:03d}{sufijo}"
+    # Si no hay ninguno emitido aun este año, arrancamos desde el minimo
+    # configurado. Si ya hay alguno, seguimos correlativo desde max+1.
+    inicial = NRO_INICIAL_POR_ANIO.get(anio, 1)
+    proximo = max(max_n + 1, inicial)
+    return f"{proximo:03d}{sufijo}"
 
 def _descripcion_concepto(reserva: dict) -> str:
     """Construye la frase del CONCEPTO de la factura a partir de los
@@ -2695,18 +2708,10 @@ elif seccion == "✏️ Editar reserva":
         # Para el date_input intentamos parsear la fecha de BD; si no se puede
         # usamos hoy como valor inicial.
         _ff_date  = parse_date_safe(ff_actual) or date.today()
-        # Sugerencia del Nº de documento, por prioridad:
-        #   1) Si ya hay un nro_factura guardado, ese.
-        #   2) Si la reserva tiene nro_reserva (cliente), usar ese
-        #      (es lo que el cliente reconoce). Editable.
-        #   3) Si no, el siguiente correlativo automatico NNN-YY.
-        _nro_reserva_orig = _safe_str(reserva.get("nro_reserva"))
-        if nf_actual:
-            _sugerido_nro = nf_actual
-        elif _nro_reserva_orig:
-            _sugerido_nro = _nro_reserva_orig
-        else:
-            _sugerido_nro = siguiente_nro_factura()
+        # Sugerencia del Nº de documento:
+        #   1) Si ya hay un nro_factura guardado, ese (no re-genera).
+        #   2) Si no, el siguiente correlativo automatico NNN-YY.
+        _sugerido_nro = nf_actual if nf_actual else siguiente_nro_factura()
 
         # ── Casilla para el NIF dentro del propio panel (asi no hay que
         #    ir arriba al formulario, guardar y volver a bajar) ───────
@@ -2727,10 +2732,9 @@ elif seccion == "✏️ Editar reserva":
                 "Nº de documento",
                 value=_sugerido_nro,
                 key=f"doc_nro_edit_{id_sel}",
-                help=("Editable. Por defecto se usa el **Nº de reserva** "
-                      "del cliente (lo que aparece arriba en el formulario). "
-                      "Si la reserva no tiene Nº, se sugiere el siguiente "
-                      "correlativo automático tipo `001-26`."),
+                help=("Editable. Se sugiere el siguiente correlativo "
+                      "automático con formato `NNN-YY` (el año en curso). "
+                      "En 2026 la numeración arranca desde 041-26."),
             )
         with col_ff:
             nuevo_fecha_doc = st.date_input(
@@ -5578,16 +5582,9 @@ elif seccion == "📄 Documento de reserva":
         ff_doc_actual  = _safe_str_g(reserva_doc.get("fecha_factura"))
         nif_doc_actual = _safe_str_g(reserva_doc.get("nif"))
         _ff_d = parse_date_safe(ff_doc_actual) or date.today()
-        # Sugerencia del Nº de documento (misma logica que en Editar reserva):
-        # primero el ya emitido, luego el nro_reserva del cliente, y como
-        # ultimo recurso el siguiente correlativo NNN-YY.
-        _nro_reserva_doc = _safe_str_g(reserva_doc.get("nro_reserva"))
-        if nf_doc_actual:
-            _sug_nro = nf_doc_actual
-        elif _nro_reserva_doc:
-            _sug_nro = _nro_reserva_doc
-        else:
-            _sug_nro = siguiente_nro_factura()
+        # Sugerencia del Nº de documento: el ya emitido o, si no, el
+        # siguiente correlativo automatico NNN-YY.
+        _sug_nro = nf_doc_actual if nf_doc_actual else siguiente_nro_factura()
 
         # Las keys incluyen el id de la reserva para que cuando el usuario
         # cambie de cliente en el selector, los inputs se refresquen con
@@ -5608,9 +5605,9 @@ elif seccion == "📄 Documento de reserva":
                 "Nº de documento",
                 value=_sug_nro,
                 key=f"doc2_nro_{id_doc}",
-                help=("Editable. Por defecto se usa el **Nº de reserva** "
-                      "del cliente. Si no existe, se sugiere el siguiente "
-                      "correlativo automático tipo `001-26`."),
+                help=("Editable. Se sugiere el siguiente correlativo "
+                      "automático con formato `NNN-YY`. En 2026 la "
+                      "numeración arranca desde 041-26."),
             )
         with col2:
             nuevo_fecha = st.date_input(
