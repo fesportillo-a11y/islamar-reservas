@@ -1279,6 +1279,122 @@ def asignar_aptos_auto(tipo_dorm: str, f_ent: date, f_sal: date,
             asignados.append(c)
     return asignados
 
+def reorganizar_asignacion_tipo(
+    tipo_dorm: str,
+    nuevas: list,
+    df_existentes,
+    max_intentos: int = 20000,
+) -> "dict | None":
+    """Intenta encontrar una asignacion de apartamentos VALIDA para todas
+    las reservas de un tipo dado (nuevas + existentes en BD) minimizando
+    los desplazamientos de las existentes.
+
+    Args:
+        tipo_dorm: '1', '2' o 'Estudio'.
+        nuevas: lista de dicts con {'key': str, 'f_ent': date, 'f_sal': date,
+                'apto_pref': str opcional}. `key` identifica cada nueva reserva.
+        df_existentes: DataFrame con las reservas ya guardadas en BD (todas,
+                sin filtrar por tipo; la funcion filtra internamente).
+
+    Returns:
+        Dict {key_o_id_bd: apartamento_asignado} si encuentra una asignacion
+        valida para TODAS. `key` para las nuevas (se pasa tal cual) y el `id`
+        (int) para las existentes en BD que se reasignen.
+        None si no hay ninguna distribucion posible (falta real de espacio).
+    """
+    aptos = APTOS_POR_TIPO.get(tipo_dorm, [])
+    if not aptos:
+        return None
+
+    # Recopilar TODAS las reservas relevantes (nuevas + existentes de este tipo)
+    reservas = []
+    for nueva in nuevas:
+        reservas.append({
+            "key":       nueva["key"],
+            "es_nueva":  True,
+            "f_ent":     nueva["f_ent"],
+            "f_sal":     nueva["f_sal"],
+            "apto_pref": nueva.get("apto_pref", ""),
+        })
+    for _, r in df_existentes.iterrows():
+        apto_r = str(r.get("apartamento", "") or "").strip()
+        if apto_r not in aptos:
+            continue
+        if es_cancelada(r.get("estado_pago", "")):
+            continue
+        f_e = parse_date_safe(r.get("entrada", ""))
+        f_s = parse_date_safe(r.get("salida", ""))
+        if not f_e or not f_s:
+            continue
+        try:
+            rid = int(r["id"])
+        except Exception:
+            continue
+        reservas.append({
+            "key":       rid,
+            "es_nueva":  False,
+            "f_ent":     f_e,
+            "f_sal":     f_s,
+            "apto_pref": apto_r,  # su asignacion actual (queremos conservarla)
+        })
+
+    if not reservas:
+        return {}
+
+    # Filtrar SOLO las que solapan con alguna nueva (las lejanas no afectan)
+    if nuevas:
+        f_min = min(n["f_ent"] for n in nuevas)
+        f_max = max(n["f_sal"] for n in nuevas)
+        # margen: 60 dias antes/despues por si hay cadena de solapes
+        from datetime import timedelta as _td
+        f_min -= _td(days=60)
+        f_max += _td(days=60)
+        reservas = [r for r in reservas
+                    if r["f_ent"] < f_max and r["f_sal"] > f_min]
+
+    if not reservas:
+        return {}
+
+    # Ordenar por entrada (mejor para backtracking)
+    reservas.sort(key=lambda x: (x["f_ent"], x["f_sal"]))
+
+    def _solapa(a, b):
+        return a["f_ent"] < b["f_sal"] and a["f_sal"] > b["f_ent"]
+
+    asignacion  = {}
+    intentos    = [0]
+    def _rec(idx: int) -> bool:
+        if intentos[0] > max_intentos:
+            return False
+        intentos[0] += 1
+        if idx == len(reservas):
+            return True
+        r = reservas[idx]
+        # Probamos primero su apto_pref para minimizar cambios,
+        # y despues el resto de aptos del tipo.
+        candidatos = list(aptos)
+        if r["apto_pref"] and r["apto_pref"] in candidatos:
+            candidatos.remove(r["apto_pref"])
+            candidatos.insert(0, r["apto_pref"])
+        for apto in candidatos:
+            # Verificar que no solapa con ninguna reserva ya asignada al mismo apto
+            hay_conflicto = False
+            for prev in reservas[:idx]:
+                if asignacion.get(prev["key"]) == apto and _solapa(r, prev):
+                    hay_conflicto = True
+                    break
+            if hay_conflicto:
+                continue
+            asignacion[r["key"]] = apto
+            if _rec(idx + 1):
+                return True
+            del asignacion[r["key"]]
+        return False
+
+    if _rec(0):
+        return asignacion
+    return None
+
 # ─────────────────────────────────────────────
 # CONEXIÓN SUPABASE
 # ─────────────────────────────────────────────
@@ -4517,6 +4633,66 @@ elif seccion == "📥 Importar Booking":
                         }])
                         df_asignados = pd.concat([df_asignados, nuevo_reg], ignore_index=True)
 
+            # ── Reorganización automática de reservas sin apartamento ─────
+            # Si tras el bucle greedy quedan filas SIN apartamento, se
+            # intenta una redistribución global por tipo: se reasignan
+            # apartamentos existentes de mismo tipo hasta encontrar una
+            # distribución válida (backtracking). Solo se avisa al usuario
+            # de reasignaciones cuando afectan a reservas ya guardadas
+            # (no cancela nada; solo cambia el `apartamento` en BD).
+            reasignaciones_bd = []   # lista de dicts {id, apto_ant, apto_nuevo}
+            reservas_sin_hueco = []  # las que la reorganización no pudo colocar
+            if filas:
+                by_tipo = {}
+                for idx, f in enumerate(filas):
+                    if not str(f.get("apartamento", "") or "").strip():
+                        tipo = str(f.get("dormitorios") or "1")
+                        e = parse_date_safe(f.get("entrada", ""))
+                        s = parse_date_safe(f.get("salida", ""))
+                        if not e or not s:
+                            continue
+                        by_tipo.setdefault(tipo, []).append({
+                            "idx_fila":  idx,
+                            "key":       f"__nueva_{idx}",
+                            "f_ent":     e,
+                            "f_sal":     s,
+                            "apto_pref": "",
+                        })
+                for tipo, nuevas_grp in by_tipo.items():
+                    asignacion = reorganizar_asignacion_tipo(tipo, nuevas_grp, df)
+                    if asignacion is None:
+                        # No hay distribución válida ni reorganizando
+                        for nueva in nuevas_grp:
+                            reservas_sin_hueco.append({
+                                "idx_fila": nueva["idx_fila"],
+                                "tipo":     tipo,
+                                "cliente":  filas[nueva["idx_fila"]].get("nombre", ""),
+                                "entrada":  filas[nueva["idx_fila"]].get("entrada", ""),
+                                "salida":   filas[nueva["idx_fila"]].get("salida", ""),
+                            })
+                        continue
+                    # 1) Aplicar el apto a las NUEVAS filas del import
+                    for nueva in nuevas_grp:
+                        nuevo_apto = asignacion.get(nueva["key"], "")
+                        if nuevo_apto:
+                            filas[nueva["idx_fila"]]["apartamento"] = nuevo_apto
+                            filas[nueva["idx_fila"]]["dormitorios"] = tipo
+                    # 2) Detectar reasignaciones a reservas EXISTENTES en BD
+                    for key, apto_nuevo in asignacion.items():
+                        if isinstance(key, int):  # id de BD
+                            fila_bd = df[df["id"].astype(int) == key]
+                            if not fila_bd.empty:
+                                apto_ant = str(fila_bd.iloc[0].get("apartamento", "") or "").strip()
+                                if apto_ant and apto_ant != apto_nuevo:
+                                    reasignaciones_bd.append({
+                                        "id":         key,
+                                        "cliente":    str(fila_bd.iloc[0].get("nombre", "") or ""),
+                                        "apto_ant":   apto_ant,
+                                        "apto_nuevo": apto_nuevo,
+                                        "entrada":    str(fila_bd.iloc[0].get("entrada", "") or ""),
+                                        "salida":     str(fila_bd.iloc[0].get("salida", "") or ""),
+                                    })
+
             df_bk = pd.DataFrame(filas) if filas else pd.DataFrame()
 
             # Detectar duplicados (nro_reserva ya en BD)
@@ -4695,6 +4871,79 @@ elif seccion == "📥 Importar Booking":
                     f"ℹ️ {len(canceladas_excel)} reserva(s) cancelada(s) en el archivo "
                     f"— ninguna estaba guardada en la aplicación."
                 )
+
+            # ── Panel: reasignaciones automáticas por reorganización ─────
+            # Cuando algún hueco no tenía apto libre directamente, se ha
+            # ejecutado un algoritmo de reorganización que mueve reservas
+            # existentes del MISMO tipo a otros apartamentos para hacer
+            # sitio. Aquí se muestran los cambios propuestos para que el
+            # usuario los confirme antes de aplicarlos en BD.
+            if reasignaciones_bd:
+                st.markdown("---")
+                st.warning(
+                    f"🔀 **Reorganización automática**: para poder ubicar las "
+                    f"nuevas reservas del Excel, hay que **mover {len(reasignaciones_bd)} "
+                    f"reserva(s) ya guardadas** a otro apartamento del mismo "
+                    f"tipo. El cliente, las fechas y todo lo demás se mantienen "
+                    f"igual — solo cambia el apartamento asignado."
+                )
+                df_reasig_auto = pd.DataFrame([{
+                    "Cliente":    r["cliente"],
+                    "Entrada":    r["entrada"],
+                    "Salida":     r["salida"],
+                    "Antes":      r["apto_ant"],
+                    "→":          "→",
+                    "Después":    r["apto_nuevo"],
+                } for r in reasignaciones_bd])
+                st.dataframe(df_reasig_auto, use_container_width=True,
+                             hide_index=True,
+                             column_config={
+                                 "Cliente":  st.column_config.TextColumn(width=200),
+                                 "Entrada":  st.column_config.TextColumn(width=95),
+                                 "Salida":   st.column_config.TextColumn(width=95),
+                                 "Antes":    st.column_config.TextColumn(width=170),
+                                 "→":        st.column_config.TextColumn(width=30),
+                                 "Después":  st.column_config.TextColumn(width=170),
+                             })
+                if st.button(
+                    f"✅ Aplicar reasignación a {len(reasignaciones_bd)} reserva(s) existente(s)",
+                    type="primary", use_container_width=True,
+                    key="btn_apply_reasig_auto",
+                ):
+                    n_ok, n_err = 0, 0
+                    for r in reasignaciones_bd:
+                        try:
+                            actualizar_reserva(int(r["id"]),
+                                               {"apartamento": r["apto_nuevo"]})
+                            n_ok += 1
+                        except Exception:
+                            n_err += 1
+                    st.success(f"✅ {n_ok} reserva(s) reasignada(s) correctamente.")
+                    if n_err:
+                        st.error(f"⚠️ {n_err} error(es) al reasignar.")
+                    st.cache_resource.clear()
+                    st.rerun()
+
+            # ── Panel: reservas SIN hueco tras reorganización ────────────
+            # Solo se llena si tras probar TODAS las combinaciones no hay
+            # ninguna distribución válida (falta real de espacio).
+            if reservas_sin_hueco:
+                st.markdown("---")
+                st.error(
+                    f"⛔ **No hay disponibilidad real** para ubicar "
+                    f"**{len(reservas_sin_hueco)} reserva(s)** del Excel. "
+                    f"Se probó reorganizando las reservas existentes del "
+                    f"mismo tipo y aun así no cabe. Estas reservas se "
+                    f"importarán sin apartamento (asígnales uno manualmente "
+                    f"desde la Plantilla mensual una vez liberes hueco)."
+                )
+                df_sin_hueco = pd.DataFrame([{
+                    "Cliente":  r["cliente"],
+                    "Tipo":     r["tipo"],
+                    "Entrada":  r["entrada"],
+                    "Salida":   r["salida"],
+                } for r in reservas_sin_hueco])
+                st.dataframe(df_sin_hueco, use_container_width=True, hide_index=True)
 
             # ── Panel de reservas existentes con cambios ────────────────────
             if updates_plan:
