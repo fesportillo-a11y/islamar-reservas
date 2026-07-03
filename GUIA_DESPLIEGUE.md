@@ -359,6 +359,65 @@ brute-force (todos los intentos pasan sin registrarse ni bloquearse).
 
 ---
 
+## PASO 7.6 · Seguridad — log de auditoría
+
+Registro completo de qué usuario crea/edita/borra qué reserva y cuándo.
+Panel "🔒 Auditoría" en el menú lateral solo para admins.
+
+### 1. Crear la tabla en Supabase
+
+Ejecuta este SQL en **Supabase → SQL Editor → New query → Run**:
+
+```sql
+CREATE TABLE IF NOT EXISTS public.auditoria (
+  id          BIGSERIAL PRIMARY KEY,
+  usuario     TEXT NOT NULL,
+  nombre      TEXT,
+  accion      TEXT NOT NULL,               -- CREAR / EDITAR / ELIMINAR
+  id_reserva  BIGINT,
+  detalles    JSONB,
+  creado_en   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_auditoria_creado_en
+  ON public.auditoria (creado_en DESC);
+CREATE INDEX IF NOT EXISTS idx_auditoria_usuario
+  ON public.auditoria (usuario);
+CREATE INDEX IF NOT EXISTS idx_auditoria_id_reserva
+  ON public.auditoria (id_reserva);
+
+ALTER TABLE public.auditoria ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS auditoria_select_all ON public.auditoria;
+DROP POLICY IF EXISTS auditoria_insert_all ON public.auditoria;
+
+CREATE POLICY auditoria_select_all
+  ON public.auditoria FOR SELECT
+  TO anon, authenticated USING (true);
+CREATE POLICY auditoria_insert_all
+  ON public.auditoria FOR INSERT
+  TO anon, authenticated WITH CHECK (true);
+
+GRANT SELECT, INSERT ON public.auditoria TO anon, authenticated;
+GRANT USAGE, SELECT ON SEQUENCE auditoria_id_seq TO anon, authenticated;
+
+NOTIFY pgrst, 'reload schema';
+```
+
+### 2. Uso
+
+Después, entra a la app como admin y verás en el menú lateral la nueva
+sección **"🔒 Auditoría"**. Ahí puedes:
+
+- Filtrar por rango de fechas, tipo de acción y usuario.
+- Ver el detalle completo de cada cambio (cliente, apartamento, fechas,
+  precio, etc.).
+- Descargar el histórico como CSV para archivo o análisis externo.
+
+Sin esta tabla la app sigue funcionando, pero los cambios NO se registran.
+
+---
+
 ## PASO 7.4 · Habilitar la emisión del documento de reserva (opcional)
 
 Para que la app pueda emitir el documento de reserva PDF tipo ESTEASUR

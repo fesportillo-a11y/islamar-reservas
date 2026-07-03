@@ -1872,15 +1872,70 @@ _CAMPOS_OPCIONALES_BD = (
 def _payload_sin_opcionales(datos: dict) -> dict:
     return {k: v for k, v in datos.items() if k not in _CAMPOS_OPCIONALES_BD}
 
+# ─────────────────────────────────────────────
+# AUDITORÍA: log de acciones sobre reservas
+# ─────────────────────────────────────────────
+def registrar_auditoria(accion: str, id_reserva: "int | None",
+                        detalles: "dict | None" = None) -> None:
+    """Inserta una fila en `auditoria`. Falla en silencio si la tabla
+    aún no existe."""
+    try:
+        usuario = str(st.session_state.get("username") or "?").strip().lower()
+        nombre  = str(st.session_state.get("name") or "").strip()
+        # Filtramos detalles a algo compacto y serializable
+        det = {}
+        if detalles:
+            for k, v in detalles.items():
+                if v is None:
+                    continue
+                try:
+                    s = str(v)
+                    if len(s) > 200:
+                        s = s[:197] + "..."
+                    det[k] = s
+                except Exception:
+                    pass
+        supabase.table("auditoria").insert({
+            "usuario":     usuario,
+            "nombre":      nombre or usuario,
+            "accion":      str(accion).upper(),
+            "id_reserva":  int(id_reserva) if id_reserva is not None else None,
+            "detalles":    det,
+            "creado_en":   datetime.utcnow().isoformat() + "Z",
+        }).execute()
+    except Exception:
+        pass  # tabla no existe aún — no bloqueamos el flujo
+
+def _resumen_reserva(datos: dict) -> dict:
+    """Extrae los campos clave de una reserva para el detalle de auditoría."""
+    if not datos:
+        return {}
+    return {
+        "cliente":     datos.get("nombre"),
+        "apartamento": datos.get("apartamento"),
+        "entrada":     datos.get("entrada"),
+        "salida":      datos.get("salida"),
+        "fuente":      datos.get("fuente"),
+        "precio":      datos.get("precio"),
+    }
+
 def guardar_reserva(datos: dict):
     try:
-        supabase.table("reservas").insert(datos).execute()
+        resp = supabase.table("reservas").insert(datos).execute()
     except Exception as ex:
         msg = str(ex).lower()
         if any(c in msg for c in _CAMPOS_OPCIONALES_BD) or "column" in msg or "pgrst204" in msg:
-            supabase.table("reservas").insert(_payload_sin_opcionales(datos)).execute()
+            resp = supabase.table("reservas").insert(_payload_sin_opcionales(datos)).execute()
         else:
             raise
+    # Auditoría (mejor esfuerzo)
+    try:
+        nueva_id = None
+        if resp and getattr(resp, "data", None):
+            nueva_id = int(resp.data[0].get("id"))
+    except Exception:
+        nueva_id = None
+    registrar_auditoria("CREAR", nueva_id, _resumen_reserva(datos))
 
 def actualizar_reserva(id_reserva: int, datos: dict):
     # Sello de "última modificación" para que Listado Raquel pueda marcar
@@ -1896,9 +1951,22 @@ def actualizar_reserva(id_reserva: int, datos: dict):
             supabase.table("reservas").update(_payload_sin_opcionales(datos)).eq("id", id_reserva).execute()
         else:
             raise
+    # Auditoría (solo campos "de negocio", no timestamps internos)
+    det = {k: v for k, v in datos.items()
+           if k not in ("updated_at",) and v not in (None, "")}
+    registrar_auditoria("EDITAR", id_reserva, det)
 
 def eliminar_reserva(id_reserva: int):
+    # Antes de borrar, capturamos un resumen para el detalle
+    try:
+        resp = supabase.table("reservas").select(
+            "nombre, apartamento, entrada, salida, fuente"
+        ).eq("id", id_reserva).limit(1).execute()
+        det = resp.data[0] if resp and getattr(resp, "data", None) else {}
+    except Exception:
+        det = {}
     supabase.table("reservas").delete().eq("id", id_reserva).execute()
+    registrar_auditoria("ELIMINAR", id_reserva, det)
 
 def borrar_todas_las_reservas():
     """Elimina TODAS las reservas de la base de datos."""
@@ -2309,6 +2377,7 @@ with st.sidebar:
         # lista vacía pero no romperá nada.
         if IS_ADMIN:
             _secciones_nav.append("👥 Usuarios")
+            _secciones_nav.append("🔒 Auditoría")
     seccion = st.radio("nav", _secciones_nav, label_visibility="collapsed")
 
     # Los filtros antiguos del sidebar se han eliminado. Cada sección
@@ -6145,6 +6214,124 @@ elif seccion == "📄 Documento de reserva":
                     disabled=True, use_container_width=True,
                     help="Rellena N.I.F. y Nº de documento para descargar.",
                 )
+
+# ─────────────────────────────────────────────
+# SECCIÓN: AUDITORÍA (solo admins)
+# ─────────────────────────────────────────────
+elif seccion == "🔒 Auditoría":
+    if not IS_ADMIN:
+        st.error("⛔ No tienes permiso para acceder a esta sección.")
+        st.stop()
+
+    st.markdown("### 🔒 Auditoría — historial de cambios")
+    st.caption(
+        "Registro de todas las **creaciones, ediciones y eliminaciones** "
+        "de reservas hechas desde la app, con el usuario responsable y la "
+        "fecha exacta (hora Madrid)."
+    )
+
+    # ── Filtros ──
+    col_f_desde, col_f_hasta, col_f_acc, col_f_user = st.columns(4)
+    with col_f_desde:
+        f_desde_aud = st.date_input(
+            "Desde", value=date.today() - timedelta(days=7),
+            format="DD/MM/YYYY", key="aud_desde",
+        )
+    with col_f_hasta:
+        f_hasta_aud = st.date_input(
+            "Hasta", value=date.today(),
+            format="DD/MM/YYYY", key="aud_hasta",
+        )
+    with col_f_acc:
+        f_acciones = st.multiselect(
+            "Acción", ["CREAR", "EDITAR", "ELIMINAR"],
+            default=[],
+            key="aud_acciones",
+            placeholder="Todas",
+        )
+    with col_f_user:
+        f_usuario = st.text_input(
+            "Usuario", placeholder="Ej. festeban",
+            key="aud_user",
+        ).strip().lower()
+
+    # ── Carga desde BD ──
+    try:
+        desde_iso = f_desde_aud.isoformat()
+        hasta_iso = (f_hasta_aud + timedelta(days=1)).isoformat()
+        q = (supabase.table("auditoria")
+             .select("*")
+             .gte("creado_en", desde_iso)
+             .lt("creado_en", hasta_iso)
+             .order("creado_en", desc=True)
+             .limit(2000))
+        if f_acciones:
+            q = q.in_("accion", f_acciones)
+        if f_usuario:
+            q = q.eq("usuario", f_usuario)
+        resp_aud = q.execute()
+        rows_aud = resp_aud.data or []
+    except Exception as ex:
+        st.error(
+            f"⚠️ No se pudo leer la tabla `auditoria`. "
+            f"Puede que aún no esté creada en Supabase. Ve a **SQL Editor** "
+            f"y ejecuta el SQL del PASO 7.6 de GUIA_DESPLIEGUE.md.\n\n"
+            f"Error: {ex}"
+        )
+        st.stop()
+
+    if not rows_aud:
+        st.info("No hay eventos de auditoría en el rango seleccionado.")
+    else:
+        st.markdown(f"**{len(rows_aud)} evento(s)**")
+
+        # Formatear filas para la tabla
+        def _fmt_ts(v):
+            try:
+                ts = pd.to_datetime(v, utc=True).tz_convert("Europe/Madrid")
+                return ts.strftime("%d/%m/%Y %H:%M:%S")
+            except Exception:
+                return str(v or "")[:19]
+
+        def _fmt_detalles(d):
+            if not d:
+                return ""
+            if isinstance(d, dict):
+                return " · ".join(f"{k}={v}" for k, v in d.items())
+            return str(d)
+
+        def _icon(a):
+            return {"CREAR": "➕", "EDITAR": "✏️",
+                    "ELIMINAR": "🗑️"}.get(str(a).upper(), "•")
+
+        df_aud = pd.DataFrame([{
+            "Fecha":     _fmt_ts(r.get("creado_en")),
+            "Usuario":   r.get("nombre") or r.get("usuario") or "?",
+            "Acción":    f"{_icon(r.get('accion'))} {r.get('accion','')}",
+            "Reserva ID": r.get("id_reserva") or "",
+            "Detalles":  _fmt_detalles(r.get("detalles")),
+        } for r in rows_aud])
+
+        st.dataframe(
+            df_aud, use_container_width=True, hide_index=True,
+            height=min(80 + 35 * len(df_aud), 700),
+            column_config={
+                "Fecha":     st.column_config.TextColumn(width=150),
+                "Usuario":   st.column_config.TextColumn(width=140),
+                "Acción":    st.column_config.TextColumn(width=110),
+                "Reserva ID": st.column_config.TextColumn(width=90),
+                "Detalles":  st.column_config.TextColumn(width=550),
+            },
+        )
+
+        # Exportar a CSV
+        csv_aud = df_aud.to_csv(index=False, sep=";").encode("utf-8-sig")
+        st.download_button(
+            "⬇️ Descargar CSV",
+            data=csv_aud,
+            file_name=f"Auditoria_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv",
+        )
 
 # ─────────────────────────────────────────────
 # SECCIÓN: USUARIOS (solo admins)
