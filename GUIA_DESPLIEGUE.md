@@ -359,6 +359,54 @@ brute-force (todos los intentos pasan sin registrarse ni bloquearse).
 
 ---
 
+## PASO 7.8 · Facturas formales tipo empresa
+
+Además del **documento de reserva** para particulares (PASO 7.4),
+la app puede emitir **facturas formales** con la estructura tabular,
+IVA, referencia de obra y demás datos que piden los clientes empresariales.
+
+### 1. Añadir columnas a la tabla `reservas`
+
+```sql
+ALTER TABLE public.reservas ADD COLUMN IF NOT EXISTS cliente_direccion    TEXT;
+ALTER TABLE public.reservas ADD COLUMN IF NOT EXISTS cliente_cp_localidad TEXT;
+ALTER TABLE public.reservas ADD COLUMN IF NOT EXISTS ref_obra             TEXT;
+ALTER TABLE public.reservas ADD COLUMN IF NOT EXISTS nro_factura_emp      TEXT;
+ALTER TABLE public.reservas ADD COLUMN IF NOT EXISTS fecha_factura_emp    TEXT;
+ALTER TABLE public.reservas ADD COLUMN IF NOT EXISTS proveedor            TEXT;
+ALTER TABLE public.reservas ADD COLUMN IF NOT EXISTS pedido               TEXT;
+ALTER TABLE public.reservas ADD COLUMN IF NOT EXISTS iva_porcentaje       NUMERIC DEFAULT 0;
+NOTIFY pgrst, 'reload schema';
+```
+
+### 2. Cómo usarlo
+
+En el menú lateral aparece **📋 Facturas**:
+
+1. Busca al cliente por nombre.
+2. Selecciona la reserva concreta.
+3. Rellena:
+   - **Dirección**, **CP + Localidad**, **CIF/NIF** del cliente.
+   - **Nº factura** (por defecto siguiente correlativo `NNN-AP26` — en 2026
+     arranca en 003).
+   - **Fecha** (por defecto hoy).
+   - **IVA %**: 0 = exenta (añade automáticamente la nota "Factura exenta
+     de IVA según apartado 23 del artículo 20.1 de la Ley 37/1992").
+   - Opcional: **REF. OBRA**, **Proveedor**, **Pedido**.
+4. Pulsa **📄 Emitir factura** para persistir los datos en BD.
+5. Pulsa **⬇️ Descargar PDF factura**.
+
+El PDF sigue el formato del modelo tipo `002-AP26`:
+cabecera con logo y datos registrales, cliente a la derecha, cuadro de
+Fecha/Factura/Proveedor/Pedido, banner azul "FACTURA", tabla
+Descripción/Cantidad/P.Unitario/TOTAL y pie con Base Imp / IVA / Ret /
+Total Factura.
+
+Coexiste con la sección **📄 Documento de reserva** (particulares) —
+usa la que corresponda según el tipo de cliente.
+
+---
+
 ## PASO 7.7 · Seguridad — 2FA para administradores
 
 Verificación en dos pasos con **Google Authenticator / Authy / Microsoft
