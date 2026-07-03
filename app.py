@@ -1457,6 +1457,75 @@ def eliminar_usuario_bd(user_id: int) -> None:
 # Si st.secrets["auth"] no existe, la app se bloquea con un mensaje claro:
 # nadie entra sin credenciales correctas, ni siquiera por accidente.
 
+# ─────────────────────────────────────────────
+# SEGURIDAD: BLOQUEO TRAS INTENTOS FALLIDOS
+# ─────────────────────────────────────────────
+# Protección brute-force. Un usuario que falla la contraseña más de
+# `LOGIN_MAX_FALLOS` veces en `LOGIN_VENTANA_MIN` minutos queda bloqueado
+# durante `LOGIN_BLOQUEO_MIN` minutos.
+LOGIN_MAX_FALLOS   = 5
+LOGIN_VENTANA_MIN  = 15
+LOGIN_BLOQUEO_MIN  = 15
+
+def registrar_intento_login(username: str, success: bool) -> None:
+    """Inserta una fila en `login_attempts`. Falla en silencio si la
+    tabla aún no existe (para no bloquear a nadie durante el rollout)."""
+    if not username:
+        return
+    try:
+        supabase.table("login_attempts").insert({
+            "username":     str(username).strip().lower(),
+            "success":      bool(success),
+            "attempted_at": datetime.utcnow().isoformat() + "Z",
+        }).execute()
+    except Exception:
+        pass  # tabla no existe aún — no bloqueamos el flujo
+
+def _fallos_recientes(username: str) -> "tuple[int, datetime | None]":
+    """Devuelve (n_fallos_en_ventana, timestamp_ultimo_fallo)."""
+    if not username:
+        return 0, None
+    try:
+        desde = datetime.utcnow() - timedelta(minutes=LOGIN_VENTANA_MIN)
+        resp = (supabase.table("login_attempts")
+                .select("attempted_at, success")
+                .eq("username", str(username).strip().lower())
+                .gte("attempted_at", desde.isoformat() + "Z")
+                .order("attempted_at", desc=True)
+                .limit(50)
+                .execute())
+        data = resp.data or []
+    except Exception:
+        return 0, None
+    # Cortar en el ultimo login exitoso (si existió tras un fallo, se reinicia)
+    fallos, ultimo_fallo = 0, None
+    for row in data:
+        if row.get("success"):
+            break
+        fallos += 1
+        if ultimo_fallo is None:
+            try:
+                ultimo_fallo = pd.to_datetime(row.get("attempted_at"), utc=True).to_pydatetime()
+            except Exception:
+                pass
+    return fallos, ultimo_fallo
+
+def login_bloqueado(username: str) -> "tuple[bool, int]":
+    """Devuelve (esta_bloqueado, segundos_restantes) para un usuario dado."""
+    fallos, ultimo = _fallos_recientes(username)
+    if fallos < LOGIN_MAX_FALLOS or ultimo is None:
+        return False, 0
+    try:
+        # ultimo es aware (UTC); comparamos con utcnow aware
+        from datetime import timezone
+        ahora = datetime.now(timezone.utc)
+        fin = ultimo + timedelta(minutes=LOGIN_BLOQUEO_MIN)
+        if ahora >= fin:
+            return False, 0
+        return True, int((fin - ahora).total_seconds())
+    except Exception:
+        return False, 0
+
 def _build_authenticator():
     try:
         auth_cfg = st.secrets["auth"]
@@ -1681,6 +1750,26 @@ header[data-testid="stHeader"]    { background: transparent !important; box-shad
         unsafe_allow_html=True,
     )
 
+    # ── Chequeo previo de bloqueo por intentos fallidos ────────────
+    # Si el usuario del último intento sigue bloqueado, mostramos aviso
+    # y le impedimos usar el formulario hasta que expire la ventana.
+    _last_user = str(st.session_state.get("username") or "").strip().lower()
+    if _last_user:
+        _bloq, _seg_rest = login_bloqueado(_last_user)
+        if _bloq:
+            _mins = _seg_rest // 60
+            _secs = _seg_rest % 60
+            st.error(
+                f"⛔ Usuario **{_last_user}** bloqueado tras "
+                f"{LOGIN_MAX_FALLOS} intentos fallidos. "
+                f"Vuelve a intentarlo en **{_mins:02d}:{_secs:02d}** minutos."
+            )
+            st.markdown(
+                '<div class="islamar-foot">ESTEASUR 2015 · ISLAMAR · Acceso privado</div>',
+                unsafe_allow_html=True,
+            )
+            st.stop()
+
     # Renderiza el formulario de login DESPUÉS del hero
     try:
         authenticator.login(
@@ -1697,13 +1786,35 @@ header[data-testid="stHeader"]    { background: transparent !important; box-shad
         st.stop()
 
     auth_status = st.session_state.get("authentication_status")
+    _intento_user = str(st.session_state.get("username") or "").strip().lower()
 
     if auth_status is True:
-        # Login OK justo ahora — forzamos un rerender limpio para que el
-        # CSS del hero NO siga inyectado en la pantalla normal.
+        # Login OK justo ahora — registramos éxito y forzamos un rerender
+        # limpio para que el CSS del hero NO siga inyectado en la pantalla.
+        registrar_intento_login(_intento_user, True)
         st.rerun()
     elif auth_status is False:
-        st.error("Usuario o contraseña incorrectos.")
+        # Registrar intento fallido y comprobar si ya toca bloquearle
+        registrar_intento_login(_intento_user, False)
+        _bloq2, _seg2 = login_bloqueado(_intento_user)
+        if _bloq2:
+            _m2 = _seg2 // 60
+            _s2 = _seg2 % 60
+            st.error(
+                f"⛔ Has agotado los {LOGIN_MAX_FALLOS} intentos permitidos. "
+                f"Cuenta **{_intento_user}** bloqueada durante "
+                f"**{_m2:02d}:{_s2:02d}** minutos por seguridad."
+            )
+        else:
+            _n_fallos, _ = _fallos_recientes(_intento_user)
+            _restantes = max(0, LOGIN_MAX_FALLOS - _n_fallos)
+            if _restantes <= 2 and _restantes > 0:
+                st.error(
+                    f"Usuario o contraseña incorrectos. "
+                    f"Te quedan **{_restantes}** intento(s) antes del bloqueo."
+                )
+            else:
+                st.error("Usuario o contraseña incorrectos.")
         st.stop()
     else:
         # Aún sin validar (primera visita). Pie discreto y stop.

@@ -291,6 +291,74 @@ detecta que la columna no existe y guarda el resto de campos sin error).
 
 ---
 
+## PASO 7.5 · Seguridad — bloqueo tras 5 intentos fallidos
+
+Protección contra ataques de fuerza bruta. Un usuario que falla la
+contraseña 5 veces en 15 minutos queda bloqueado 15 minutos adicionales.
+
+### 1. Crear la tabla en Supabase
+
+Ejecuta este SQL en **Supabase → SQL Editor → New query → Run**:
+
+```sql
+CREATE TABLE IF NOT EXISTS public.login_attempts (
+  id            BIGSERIAL PRIMARY KEY,
+  username      TEXT NOT NULL,
+  success       BOOLEAN NOT NULL,
+  attempted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_login_attempts_username_time
+  ON public.login_attempts (username, attempted_at DESC);
+
+-- Row Level Security con políticas abiertas (la app usa la anon key
+-- y toda la seguridad real la aporta el login + este bloqueo).
+ALTER TABLE public.login_attempts ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS login_attempts_select_all ON public.login_attempts;
+DROP POLICY IF EXISTS login_attempts_insert_all ON public.login_attempts;
+
+CREATE POLICY login_attempts_select_all
+  ON public.login_attempts FOR SELECT
+  TO anon, authenticated USING (true);
+CREATE POLICY login_attempts_insert_all
+  ON public.login_attempts FOR INSERT
+  TO anon, authenticated WITH CHECK (true);
+
+GRANT SELECT, INSERT ON public.login_attempts TO anon, authenticated;
+GRANT USAGE, SELECT ON SEQUENCE login_attempts_id_seq TO anon, authenticated;
+
+NOTIFY pgrst, 'reload schema';
+```
+
+### 2. Verificar
+
+Con esta tabla creada, la app:
+
+- Registra CADA intento de login (éxito o fallo) en `login_attempts`.
+- Si un usuario acumula **5 fallos en 15 minutos**, queda bloqueado
+  durante 15 min más. La app muestra un mensaje claro con el tiempo
+  restante.
+- Si al llegar al 3er o 4º fallo el usuario ya está cerca del límite,
+  se le avisa: "Te quedan N intento(s) antes del bloqueo".
+- Los intentos exitosos reinician el contador.
+
+### 3. Ver el histórico (opcional)
+
+Desde el propio Supabase:
+
+```sql
+SELECT username, success, attempted_at
+FROM login_attempts
+WHERE attempted_at > NOW() - INTERVAL '1 day'
+ORDER BY attempted_at DESC;
+```
+
+Sin esta tabla la app sigue funcionando, pero SIN protección contra
+brute-force (todos los intentos pasan sin registrarse ni bloquearse).
+
+---
+
 ## PASO 7.4 · Habilitar la emisión del documento de reserva (opcional)
 
 Para que la app pueda emitir el documento de reserva PDF tipo ESTEASUR
