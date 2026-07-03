@@ -1458,6 +1458,86 @@ def eliminar_usuario_bd(user_id: int) -> None:
 # nadie entra sin credenciales correctas, ni siquiera por accidente.
 
 # ─────────────────────────────────────────────
+# SEGURIDAD: 2FA (TOTP) con Google Authenticator
+# ─────────────────────────────────────────────
+try:
+    import pyotp
+    import qrcode
+    from io import BytesIO as _MFA_BytesIO
+    _MFA_OK = True
+except Exception:
+    _MFA_OK = False
+
+MFA_ISSUER = "ISLAMAR · ESTEASUR 2015"
+
+def mfa_generar_secret() -> str:
+    """Genera un secret base32 para TOTP (Google Authenticator, etc.)."""
+    if not _MFA_OK:
+        return ""
+    return pyotp.random_base32()
+
+def mfa_uri(secret: str, username: str) -> str:
+    """Devuelve el otpauth:// URI que va dentro del código QR."""
+    if not (_MFA_OK and secret and username):
+        return ""
+    return pyotp.TOTP(secret).provisioning_uri(
+        name=username, issuer_name=MFA_ISSUER,
+    )
+
+def mfa_qr_png_bytes(secret: str, username: str) -> bytes:
+    """Genera el PNG (bytes) del QR con el otpauth URI."""
+    if not _MFA_OK:
+        return b""
+    uri = mfa_uri(secret, username)
+    if not uri:
+        return b""
+    img = qrcode.make(uri)
+    buf = _MFA_BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+def mfa_verificar_codigo(secret: str, codigo: str) -> bool:
+    """True si el código TOTP de 6 dígitos coincide con el secret.
+    Ventana ±1 (permite ~30s de desfase de reloj)."""
+    if not (_MFA_OK and secret and codigo):
+        return False
+    try:
+        return pyotp.TOTP(secret).verify(str(codigo).strip(), valid_window=1)
+    except Exception:
+        return False
+
+def mfa_estado_usuario(username: str) -> "tuple[bool, str, bool]":
+    """Devuelve (habilitado, secret, es_admin) leyendo la tabla `usuarios`.
+    Si el usuario NO está en la tabla (bootstrap admin de Secrets) o la
+    tabla no existe, devuelve (False, "", False)."""
+    if not username:
+        return False, "", False
+    try:
+        resp = (supabase.table("usuarios")
+                .select("mfa_enabled, mfa_secret, rol")
+                .eq("username", str(username).strip().lower())
+                .limit(1)
+                .execute())
+        if resp.data:
+            row = resp.data[0]
+            return (bool(row.get("mfa_enabled")),
+                    str(row.get("mfa_secret") or ""),
+                    str(row.get("rol", "")).lower() == "admin")
+    except Exception:
+        pass
+    return False, "", False
+
+def mfa_guardar_secret(username: str, secret: str, enabled: bool) -> bool:
+    try:
+        supabase.table("usuarios").update({
+            "mfa_secret":  secret if enabled else None,
+            "mfa_enabled": bool(enabled),
+        }).eq("username", str(username).strip().lower()).execute()
+        return True
+    except Exception:
+        return False
+
+# ─────────────────────────────────────────────
 # SEGURIDAD: BLOQUEO TRAS INTENTOS FALLIDOS
 # ─────────────────────────────────────────────
 # Protección brute-force. Un usuario que falla la contraseña más de
@@ -1789,6 +1869,107 @@ header[data-testid="stHeader"]    { background: transparent !important; box-shad
     _intento_user = str(st.session_state.get("username") or "").strip().lower()
 
     if auth_status is True:
+        # ── 2FA obligatorio para admins ──────────────────────────────
+        # Política: los admins DEBEN usar 2FA. Si no lo tienen configurado,
+        # se les fuerza el setup. Si lo tienen, se les pide código antes
+        # de completar el login.
+        _mfa_ok_flag = "mfa_verificado"
+        if not st.session_state.get(_mfa_ok_flag):
+            _en, _secret, _es_admin = mfa_estado_usuario(_intento_user)
+            if _es_admin and _MFA_OK:
+                if _en and _secret:
+                    # Challenge: pedir código TOTP
+                    st.markdown("### 🔐 Verificación en 2 pasos")
+                    st.info(
+                        "Introduce el código de 6 dígitos que aparece en tu "
+                        "**Google Authenticator / Authy / Microsoft Authenticator**."
+                    )
+                    _codigo = st.text_input(
+                        "Código de verificación", max_chars=6,
+                        placeholder="000000", key="mfa_challenge_input",
+                    )
+                    c_ok, c_cancel = st.columns([1, 1])
+                    with c_ok:
+                        if st.button("✅ Verificar", type="primary",
+                                     use_container_width=True):
+                            if mfa_verificar_codigo(_secret, _codigo):
+                                st.session_state[_mfa_ok_flag] = True
+                                registrar_intento_login(_intento_user, True)
+                                st.rerun()
+                            else:
+                                registrar_intento_login(_intento_user, False)
+                                st.error(
+                                    "⛔ Código incorrecto. Comprueba que la hora "
+                                    "del móvil está sincronizada y prueba con el "
+                                    "código actual (cambia cada 30 s)."
+                                )
+                    with c_cancel:
+                        if st.button("← Volver al login", use_container_width=True):
+                            try:
+                                authenticator.logout("main", "unrendered")
+                            except Exception:
+                                pass
+                            for k in ("authentication_status", "name", "username"):
+                                if k in st.session_state:
+                                    del st.session_state[k]
+                            st.rerun()
+                    st.stop()
+                else:
+                    # Setup: primera vez para este admin
+                    st.markdown("### 🔐 Activar verificación en 2 pasos")
+                    st.warning(
+                        "Como **administrador**, tu cuenta debe usar 2FA. "
+                        "Sigue los pasos una única vez para configurarlo."
+                    )
+                    if "mfa_temp_secret" not in st.session_state:
+                        st.session_state["mfa_temp_secret"] = mfa_generar_secret()
+                    _temp = st.session_state["mfa_temp_secret"]
+                    st.markdown("**1. Instala en tu móvil** una de estas apps gratis:")
+                    st.markdown(
+                        "- 📱 **Google Authenticator** (Android / iOS)\n"
+                        "- 📱 **Microsoft Authenticator**\n"
+                        "- 📱 **Authy**"
+                    )
+                    st.markdown("**2. Añade una cuenta nueva** escaneando este QR:")
+                    _png = mfa_qr_png_bytes(_temp, _intento_user)
+                    if _png:
+                        st.image(_png, width=220)
+                    st.caption(
+                        f"Si no puedes escanear, introduce este código manualmente "
+                        f"en la app: **`{_temp}`**"
+                    )
+                    st.markdown(
+                        "**3. Introduce el código de 6 dígitos** que aparece "
+                        "en la app para confirmar que funciona:"
+                    )
+                    _cod_setup = st.text_input(
+                        "Código de verificación", max_chars=6,
+                        placeholder="000000", key="mfa_setup_input",
+                    )
+                    if st.button("✅ Activar 2FA", type="primary",
+                                 use_container_width=True):
+                        if mfa_verificar_codigo(_temp, _cod_setup):
+                            if mfa_guardar_secret(_intento_user, _temp, True):
+                                st.session_state[_mfa_ok_flag] = True
+                                del st.session_state["mfa_temp_secret"]
+                                registrar_intento_login(_intento_user, True)
+                                st.success("✅ 2FA activado correctamente.")
+                                st.rerun()
+                            else:
+                                st.error(
+                                    "No se pudo guardar el secret en BD. "
+                                    "Comprueba que la tabla `usuarios` tiene las "
+                                    "columnas `mfa_enabled` y `mfa_secret` (PASO 7.7)."
+                                )
+                        else:
+                            st.error(
+                                "⛔ Código incorrecto. Revisa el QR y la hora "
+                                "del móvil."
+                            )
+                    st.stop()
+            # No es admin o no hay librerías MFA → marca verificado y sigue
+            st.session_state[_mfa_ok_flag] = True
+
         # Login OK justo ahora — registramos éxito y forzamos un rerender
         # limpio para que el CSS del hero NO siga inyectado en la pantalla.
         registrar_intento_login(_intento_user, True)

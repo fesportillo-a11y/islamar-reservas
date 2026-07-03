@@ -359,6 +359,58 @@ brute-force (todos los intentos pasan sin registrarse ni bloquearse).
 
 ---
 
+## PASO 7.7 · Seguridad — 2FA para administradores
+
+Verificación en dos pasos con **Google Authenticator / Authy / Microsoft
+Authenticator**. Obligatorio para usuarios con `rol='admin'`, opcional para
+los demás.
+
+### 1. Añadir columnas a la tabla `usuarios` en Supabase
+
+Ejecuta en **SQL Editor → New query → Run**:
+
+```sql
+ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS mfa_secret  TEXT;
+NOTIFY pgrst, 'reload schema';
+```
+
+### 2. Primer login como admin tras el despliegue
+
+En la primera entrada, la app pedirá configurar el 2FA:
+
+1. Introduces usuario + contraseña como siempre.
+2. Aparece una pantalla con un **código QR** y unas instrucciones.
+3. Abres **Google Authenticator** (o Authy / Microsoft Authenticator) en
+   el móvil → **"+"** → **"Escanear código QR"** → apuntas al QR.
+4. La app del móvil añade una entrada "ISLAMAR · ESTEASUR 2015" con un
+   código de 6 dígitos que cambia cada 30 s.
+5. Copias ese código en el campo de la web y pulsas **"Activar 2FA"**.
+6. A partir de ahí, cada vez que hagas login te pedirá el código actual.
+
+### 3. Recuperación si se pierde el móvil (admin de rescate)
+
+Si un admin pierde el móvil, otro admin puede desactivarle el 2FA con
+este SQL directo:
+
+```sql
+UPDATE public.usuarios
+SET mfa_enabled = FALSE, mfa_secret = NULL
+WHERE username = 'usuario_afectado';
+```
+
+Después el usuario podrá loguearse solo con contraseña y volver a
+configurar 2FA en el siguiente intento.
+
+Los **admins de rescate** definidos en Streamlit Secrets (`festeban` de
+`[auth.credentials.usernames]`) NO están en la tabla `usuarios`, por lo
+que a ellos NO se les pide 2FA (son la última red de seguridad). Si en
+algún momento quieres quitar esa exención, avísame.
+
+Sin esta configuración la app sigue funcionando pero SIN 2FA.
+
+---
+
 ## PASO 7.6 · Seguridad — log de auditoría
 
 Registro completo de qué usuario crea/edita/borra qué reserva y cuándo.
