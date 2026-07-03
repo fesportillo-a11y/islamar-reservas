@@ -2464,29 +2464,44 @@ elif seccion == "➕ Nueva reserva":
             "Tipo de apartamento", DORMS, key="nr_dorm",
         )
 
-    # Calcular apartamentos disponibles
-    aptos_disponibles = []
+    # Calcular apartamentos del tipo elegido, distinguiendo:
+    #   - libres: no hay conflicto directo
+    #   - ocupados: hay conflicto pero se intentará reorganizar al guardar
+    aptos_libres = []
+    aptos_ocupados = []
     fechas_ok = bool(entrada and salida and salida > entrada)
     if fechas_ok:
         candidatos = APTOS_POR_TIPO.get(dormitorios, [])
         for apto in candidatos:
             if apto_libre(apto, entrada, salida, df):
-                aptos_disponibles.append(apto)
-        if aptos_disponibles:
+                aptos_libres.append(apto)
+            else:
+                aptos_ocupados.append(apto)
+        # Todos los apartamentos del tipo van al selector, marcando cuáles
+        # requieren reorganización. Así el usuario puede elegir cualquiera.
+        aptos_disponibles = candidatos[:]  # todos, mismo orden
+        if aptos_libres:
             st.success(
-                f"✅ **{len(aptos_disponibles)} apartamento(s) libre(s)** "
-                f"del tipo **{dormitorios}** entre "
-                f"{entrada.strftime('%d/%m/%Y')} y {salida.strftime('%d/%m/%Y')}."
+                f"✅ **{len(aptos_libres)} apto(s) libre(s)** del tipo "
+                f"**{dormitorios}** entre {entrada.strftime('%d/%m/%Y')} y "
+                f"{salida.strftime('%d/%m/%Y')}."
             )
-        else:
+        if aptos_ocupados:
+            st.info(
+                f"🔀 **{len(aptos_ocupados)} apto(s) ocupado(s)** "
+                f"— si eliges uno, el sistema intentará reorganizar las "
+                f"reservas existentes del mismo tipo para hacerte sitio."
+            )
+        if not (aptos_libres or aptos_ocupados):
             st.error(
-                f"⛔ No hay apartamentos libres del tipo **{dormitorios}** "
-                f"en esas fechas."
+                f"⛔ No hay apartamentos del tipo **{dormitorios}** definidos."
             )
     elif entrada and salida and salida <= entrada:
         st.warning("La fecha de salida debe ser posterior a la de entrada.")
+        aptos_disponibles = []
     else:
         st.info("Selecciona las fechas para ver los apartamentos disponibles.")
+        aptos_disponibles = []
 
     st.markdown("---")
     st.markdown("**2️⃣ Datos de la reserva**")
@@ -2507,13 +2522,23 @@ elif seccion == "➕ Nueva reserva":
                 help="Necesario para emitir factura / documento de reserva.",
             )
             nro_reserva = st.text_input("Nº de reserva")
+            # Etiqueta con indicador libre / ocupado para cada apto
+            def _lbl_apto(a: str) -> str:
+                if a in aptos_libres:
+                    return f"🟢 {a}"
+                if a in aptos_ocupados:
+                    return f"🔀 {a}  (ocupado — se reorganizará)"
+                return a
             apartamento = st.selectbox(
-                "Apartamento * (solo libres en esas fechas)",
+                "Apartamento *",
                 [""] + aptos_disponibles,
+                format_func=lambda a: "" if a == "" else _lbl_apto(a),
                 disabled=not aptos_disponibles,
                 help=(
-                    "Aparecen únicamente los apartamentos del tipo elegido "
-                    "que están libres entre las fechas indicadas arriba."
+                    "🟢 = libre directamente. 🔀 = ocupado en esas fechas; "
+                    "al guardar el sistema intentará reorganizar las reservas "
+                    "existentes para hacer sitio. Si no cabe ni reorganizando, "
+                    "se muestra un error claro."
                 ),
             )
             mes         = st.selectbox(
@@ -2553,14 +2578,6 @@ elif seccion == "➕ Nueva reserva":
             errores.append("El nombre es obligatorio.")
         if not apartamento:
             errores.append("Selecciona un apartamento de la lista.")
-        # Re-validar disponibilidad al guardar (puede haber cambiado si otro
-        # usuario ha creado una reserva en el ínterin).
-        if apartamento and fechas_ok:
-            if not apto_libre(apartamento, entrada, salida, cargar_reservas()):
-                errores.append(
-                    f"⚠️ El apartamento **{apartamento}** ya está ocupado en "
-                    f"esas fechas. Refresca y elige otro."
-                )
 
         if errores:
             for e in errores:
@@ -2594,10 +2611,82 @@ elif seccion == "➕ Nueva reserva":
                 "forma_pago":  forma_pago,
                 "comentarios": comentarios,
             }
-            guardar_reserva(datos)
-            st.success(f"✅ Reserva de **{nombre}** guardada correctamente.")
-            st.cache_resource.clear()
-            st.rerun()
+
+            # ── Reorganización automática si el apto NO está libre ────
+            df_fresh_nr = cargar_reservas()
+            apto_disponible = apto_libre(apartamento, entrada, salida, df_fresh_nr)
+            if apto_disponible:
+                # Camino simple: apto libre, guardar directo
+                guardar_reserva(datos)
+                st.success(f"✅ Reserva de **{nombre}** guardada correctamente.")
+                st.cache_resource.clear()
+                st.rerun()
+            else:
+                # Camino con reorganización: intentamos hacer sitio
+                nuevas_nr = [{
+                    "key":       "__nueva_manual",
+                    "f_ent":     entrada,
+                    "f_sal":     salida,
+                    "apto_pref": apartamento,
+                }]
+                asignacion_nr = reorganizar_asignacion_tipo(
+                    dormitorios, nuevas_nr, df_fresh_nr
+                )
+                if asignacion_nr is None:
+                    st.error(
+                        f"⛔ **No hay disponibilidad real** para colocar esta "
+                        f"reserva. Se probó reorganizando las reservas "
+                        f"existentes del tipo **{dormitorios}** y aun así no "
+                        f"encaja en las fechas {entrada.strftime('%d/%m/%Y')} → "
+                        f"{salida.strftime('%d/%m/%Y')}. Elimina o modifica "
+                        f"alguna reserva existente para liberar hueco."
+                    )
+                else:
+                    # Aplicar reasignaciones a existentes y crear la nueva
+                    reasignaciones_nr = []
+                    for key, apto_nuevo in asignacion_nr.items():
+                        if isinstance(key, int):
+                            fila_bd = df_fresh_nr[df_fresh_nr["id"].astype(int) == key]
+                            if not fila_bd.empty:
+                                apto_ant = str(fila_bd.iloc[0].get("apartamento", "") or "").strip()
+                                if apto_ant and apto_ant != apto_nuevo:
+                                    reasignaciones_nr.append({
+                                        "id":       key,
+                                        "cliente":  str(fila_bd.iloc[0].get("nombre", "") or ""),
+                                        "apto_ant": apto_ant,
+                                        "apto_new": apto_nuevo,
+                                    })
+                    # Ajustar el apto final de la nueva reserva
+                    datos["apartamento"] = asignacion_nr.get("__nueva_manual", apartamento)
+                    # Aplicar
+                    n_ok = 0
+                    for r in reasignaciones_nr:
+                        try:
+                            actualizar_reserva(int(r["id"]),
+                                               {"apartamento": r["apto_new"]})
+                            n_ok += 1
+                        except Exception:
+                            pass
+                    guardar_reserva(datos)
+                    if reasignaciones_nr:
+                        detalle = "\n".join(
+                            f"- **{r['cliente']}**: {r['apto_ant']} → {r['apto_new']}"
+                            for r in reasignaciones_nr
+                        )
+                        st.success(
+                            f"✅ Reserva de **{nombre}** guardada en "
+                            f"**{datos['apartamento']}**.\n\n"
+                            f"🔀 Se han **reorganizado {n_ok} reserva(s) "
+                            f"existente(s)** del tipo {dormitorios} para hacer "
+                            f"sitio:\n\n{detalle}"
+                        )
+                    else:
+                        st.success(
+                            f"✅ Reserva de **{nombre}** guardada en "
+                            f"**{datos['apartamento']}**."
+                        )
+                    st.cache_resource.clear()
+                    st.rerun()
 
 # ─────────────────────────────────────────────
 # SECCIÓN: EDITAR RESERVA
