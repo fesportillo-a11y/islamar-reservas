@@ -4526,13 +4526,27 @@ elif seccion == "📅 Plantilla mensual":
                 _n_marcadas = 0
             _n_asignar = len(filas_sin_apto) - _n_marcadas
 
-            col_btn_asig, col_btn_del = st.columns(2)
+            col_btn_auto, col_btn_asig, col_btn_del = st.columns(3)
+            with col_btn_auto:
+                btn_auto = st.button(
+                    f"🔀 Auto-asignar {_n_asignar} con reorganización",
+                    type="primary", use_container_width=True,
+                    key="pm_btn_auto_sin_apto",
+                    disabled=(_n_asignar == 0),
+                    help="Aplica el algoritmo de reorganización automática con "
+                         "upgrade a tipo superior si es necesario. Reasigna "
+                         "reservas existentes de mismo tipo para hacer sitio "
+                         "y, si aun así no cabe, prueba con apartamentos de "
+                         "tipo superior (1 DORM → 2 DORM).",
+                )
             with col_btn_asig:
                 btn_asignar = st.button(
-                    f"📍 Asignar apartamento a {_n_asignar} reserva(s)",
-                    type="primary", use_container_width=True,
+                    f"📍 Asignar manualmente ({_n_asignar})",
+                    use_container_width=True,
                     key="pm_btn_asignar_sin_apto",
                     disabled=(_n_asignar == 0),
+                    help="Aplica solo el apartamento que hayas elegido en cada "
+                         "fila del desplegable de arriba. Verifica que este libre.",
                 )
             with col_btn_del:
                 btn_borrar = st.button(
@@ -4541,6 +4555,120 @@ elif seccion == "📅 Plantilla mensual":
                     key="pm_btn_borrar_sin_apto",
                     disabled=(_n_marcadas == 0),
                 )
+
+            # ── Auto-asignar con reorganización (nuevo botón principal) ──
+            if btn_auto:
+                # Agrupamos las filas por tipo (dormitorios)
+                df_fresh_auto = cargar_reservas()
+                by_tipo_pm = {}
+                for i, r in enumerate(filas_sin_apto):
+                    if bool(edited_sin_apto.iloc[i]["🗑️"]):
+                        continue  # marcadas para borrar
+                    tipo_r = str(r.get("tipo") or "1")
+                    by_tipo_pm.setdefault(tipo_r, []).append({
+                        "idx":      i,
+                        "id":       r["id"],
+                        "key":      int(r["id"]),  # usar id como key para poder mapear luego
+                        "cliente":  r["Cliente"],
+                        "f_ent":    r["f_e"],
+                        "f_sal":    r["f_s"],
+                        "apto_pref": "",
+                    })
+
+                resumen_lineas = []
+                n_asig_ok, n_reasig_ok, n_errores = 0, 0, 0
+                sin_hueco_finales = []
+
+                for tipo_pm, nuevas_pm in by_tipo_pm.items():
+                    # Le pasamos como 'nuevas' las reservas sin apto (aunque
+                    # ya esten en BD, para el algoritmo son 'nuevas' porque
+                    # aun no tienen apto asignado)
+                    # Excluimos su propio id del df_existentes para que no
+                    # se cuente como reserva ya colocada
+                    ids_a_asignar = set(int(n["id"]) for n in nuevas_pm)
+                    df_sin_estas = df_fresh_auto[
+                        ~df_fresh_auto["id"].astype(int).isin(ids_a_asignar)
+                    ]
+                    asig_pm, keys_up_pm = reorganizar_con_upgrade(
+                        tipo_pm, nuevas_pm, df_sin_estas,
+                    )
+                    if asig_pm is None:
+                        for nueva in nuevas_pm:
+                            sin_hueco_finales.append(nueva["cliente"])
+                        continue
+
+                    # Aplicar: primero las asignaciones NUEVAS (las de nuestros ids)
+                    for nueva in nuevas_pm:
+                        apto_asig = asig_pm.get(nueva["key"], "")
+                        if not apto_asig:
+                            continue
+                        try:
+                            payload = {"apartamento": apto_asig}
+                            if nueva["key"] in keys_up_pm:
+                                payload["dormitorios"] = _tipo_desde_apto(apto_asig)
+                            actualizar_reserva(int(nueva["id"]), payload)
+                            n_asig_ok += 1
+                            up_mark = " ⬆️ (upgrade)" if nueva["key"] in keys_up_pm else ""
+                            resumen_lineas.append(
+                                f"- ✅ **{nueva['cliente']}** → {apto_asig}{up_mark}"
+                            )
+                        except Exception as ex:
+                            n_errores += 1
+                            resumen_lineas.append(
+                                f"- ⚠️ Error asignando {nueva['cliente']}: {ex}"
+                            )
+
+                    # Segundo: reasignaciones a reservas EXISTENTES en BD
+                    for key, apto_nuevo in asig_pm.items():
+                        if key in ids_a_asignar:
+                            continue  # ya procesado como nueva
+                        if not isinstance(key, int):
+                            continue
+                        fila_bd = df_sin_estas[df_sin_estas["id"].astype(int) == key]
+                        if fila_bd.empty:
+                            continue
+                        apto_ant = str(fila_bd.iloc[0].get("apartamento", "") or "").strip()
+                        if not apto_ant or apto_ant == apto_nuevo:
+                            continue
+                        try:
+                            payload = {"apartamento": apto_nuevo}
+                            if key in keys_up_pm:
+                                payload["dormitorios"] = _tipo_desde_apto(apto_nuevo)
+                            actualizar_reserva(int(key), payload)
+                            n_reasig_ok += 1
+                            up_mark = " ⬆️" if key in keys_up_pm else ""
+                            cli_ex = str(fila_bd.iloc[0].get("nombre", "") or "")
+                            resumen_lineas.append(
+                                f"- 🔀{up_mark} **{cli_ex}**: {apto_ant} → {apto_nuevo}"
+                            )
+                        except Exception as ex:
+                            n_errores += 1
+                            resumen_lineas.append(
+                                f"- ⚠️ Error reasignando {key}: {ex}"
+                            )
+
+                # ── Mensajes finales ──
+                if resumen_lineas:
+                    detalle_txt = "\n".join(resumen_lineas)
+                    st.success(
+                        f"✅ **{n_asig_ok}** reserva(s) asignada(s) + "
+                        f"**{n_reasig_ok}** reasignaciones a existentes:\n\n"
+                        + detalle_txt
+                    )
+                if sin_hueco_finales:
+                    st.error(
+                        f"⛔ No se ha podido colocar a **{len(sin_hueco_finales)}** "
+                        f"reserva(s) ni siquiera con reorganización + upgrade: "
+                        + ", ".join(sin_hueco_finales) +
+                        ".\n\nElimina o modifica alguna reserva existente para "
+                        f"liberar hueco."
+                    )
+                if n_errores:
+                    st.error(f"⚠️ {n_errores} error(es) durante la asignación.")
+                if resumen_lineas or n_errores or sin_hueco_finales:
+                    st.cache_resource.clear()
+                    if resumen_lineas:
+                        st.rerun()
 
             if btn_asignar:
                 df_fresh_pm = cargar_reservas()
