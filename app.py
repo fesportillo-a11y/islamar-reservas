@@ -6272,19 +6272,34 @@ elif seccion == "📋 Listado Raquel":
                  "menos uno de los apartamentos elegidos.",
         )
 
-    col_f1, col_f2 = st.columns([3, 1])
+    col_f1, col_f2, col_f3 = st.columns([2, 2, 1])
     with col_f1:
         rango = st.date_input(
-            "Rango de fechas (muestra reservas cuya estancia se solape con este rango)",
+            "Rango de fechas",
             value=(today, fin_anio),
             format="DD/MM/YYYY",
             key="raquel_rango",
         )
     with col_f2:
+        modo_filtro_rq = st.selectbox(
+            "Modo del filtro",
+            ["Estancia (solape)", "Solo entradas (check-in)",
+             "Solo salidas (check-out)", "Entradas + salidas"],
+            index=0,
+            key="raquel_modo_filtro",
+            help=(
+                "• **Estancia (solape)**: muestra todas las reservas que "
+                "coincidan aunque sea 1 día con el rango.\n"
+                "• **Solo entradas**: solo las que hacen check-in dentro del rango.\n"
+                "• **Solo salidas**: solo las que hacen check-out dentro del rango.\n"
+                "• **Entradas + salidas**: las que entran O salen dentro del rango."
+            ),
+        )
+    with col_f3:
         st.write("")
         st.write("")
         aplicar_fechas = st.checkbox(
-            "Aplicar filtro de fechas",
+            "Aplicar",
             value=True,
             key="raquel_aplicar_fechas",
         )
@@ -6345,17 +6360,47 @@ elif seccion == "📋 Listado Raquel":
             ].drop(columns=["_nro_base_filtro"])
 
     if aplicar_fechas and f_desde and f_hasta and not df_base.empty:
-        def _solapa_rango(row):
-            e = parse_date_safe(row.get("entrada", ""))
-            s = parse_date_safe(row.get("salida", ""))
-            if not e or not s:
-                return False
-            return e <= f_hasta and s >= f_desde
-        df_base = df_base[df_base.apply(_solapa_rango, axis=1)]
-        st.caption(
-            f"🗓️ Mostrando reservas que cubren algún día entre "
-            f"**{f_desde.strftime('%d/%m/%Y')}** y **{f_hasta.strftime('%d/%m/%Y')}**."
-        )
+        def _fecha_row_ent(row):
+            return parse_date_safe(row.get("entrada", ""))
+        def _fecha_row_sal(row):
+            return parse_date_safe(row.get("salida", ""))
+
+        if modo_filtro_rq == "Estancia (solape)":
+            def _fn(row):
+                e = _fecha_row_ent(row)
+                s = _fecha_row_sal(row)
+                if not e or not s:
+                    return False
+                return e <= f_hasta and s >= f_desde
+            _caption = (f"🗓️ Estancias que solapan con "
+                        f"**{f_desde.strftime('%d/%m/%Y')} → "
+                        f"{f_hasta.strftime('%d/%m/%Y')}**.")
+        elif modo_filtro_rq == "Solo entradas (check-in)":
+            def _fn(row):
+                e = _fecha_row_ent(row)
+                return bool(e) and (f_desde <= e <= f_hasta)
+            _caption = (f"🟢 Entradas (check-in) entre "
+                        f"**{f_desde.strftime('%d/%m/%Y')} → "
+                        f"{f_hasta.strftime('%d/%m/%Y')}**.")
+        elif modo_filtro_rq == "Solo salidas (check-out)":
+            def _fn(row):
+                s = _fecha_row_sal(row)
+                return bool(s) and (f_desde <= s <= f_hasta)
+            _caption = (f"🔴 Salidas (check-out) entre "
+                        f"**{f_desde.strftime('%d/%m/%Y')} → "
+                        f"{f_hasta.strftime('%d/%m/%Y')}**.")
+        else:  # Entradas + salidas
+            def _fn(row):
+                e = _fecha_row_ent(row)
+                s = _fecha_row_sal(row)
+                ent_in = bool(e) and (f_desde <= e <= f_hasta)
+                sal_in = bool(s) and (f_desde <= s <= f_hasta)
+                return ent_in or sal_in
+            _caption = (f"🟢🔴 Entradas y salidas entre "
+                        f"**{f_desde.strftime('%d/%m/%Y')} → "
+                        f"{f_hasta.strftime('%d/%m/%Y')}**.")
+        df_base = df_base[df_base.apply(_fn, axis=1)]
+        st.caption(_caption)
 
     if df_base.empty:
         st.info("No hay reservas que mostrar con los filtros actuales.")
