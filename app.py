@@ -3755,9 +3755,17 @@ elif seccion == "✏️ Editar reserva":
                                        value=_safe_str(reserva.get("comentarios")),
                                        height=80)
 
-            col_save, col_del = st.columns([3, 1])
+            col_save, col_cancel, col_del = st.columns([3, 2, 1])
             with col_save:
                 submitted = st.form_submit_button("💾 Guardar cambios", type="primary", use_container_width=True)
+            with col_cancel:
+                cancelar_res = st.form_submit_button(
+                    "🚫 Cancelar reserva",
+                    use_container_width=True,
+                    help="Marca la reserva como CANCELADA. Deja de aparecer "
+                         "en Plantilla mensual y Listado Raquel, pero el "
+                         "histórico se conserva en BD y en auditoría.",
+                )
             with col_del:
                 eliminar  = st.form_submit_button("🗑️ Eliminar", use_container_width=True)
 
@@ -3931,6 +3939,18 @@ elif seccion == "✏️ Editar reserva":
             st.success("🗑️ Reserva eliminada.")
             st.cache_resource.clear()
             st.rerun()
+
+        if cancelar_res:
+            try:
+                actualizar_reserva(id_sel, {"estado_pago": "RESERVA ANULADA"})
+                st.success(
+                    f"🚫 Reserva de **{nombre}** marcada como CANCELADA. "
+                    f"Ya no aparecerá ni en Plantilla mensual ni en Listado Raquel."
+                )
+                st.cache_resource.clear()
+                st.rerun()
+            except Exception as ex:
+                st.error(f"Error al cancelar: {ex}")
 
 # ─────────────────────────────────────────────
 # SECCIÓN: RESUMEN DE VENTAS
