@@ -2085,22 +2085,35 @@ header[data-testid="stHeader"]    { background: transparent !important; box-shad
 }
 /* Contenedor del input (fondo solido azul-grisaceo oscuro) */
 [data-testid="stForm"] [data-baseweb="input"],
+/* Contenedores del input: fondo oscuro y borde suave. Cubrimos todas
+   las capas anidadas de Streamlit para que ningun elemento intermedio
+   deje ver un fondo blanco por debajo. */
 [data-testid="stForm"] [data-baseweb="base-input"],
+[data-testid="stForm"] [data-baseweb="input"],
 [data-testid="stForm"] [data-baseweb="input"] > div,
-[data-testid="stForm"] [data-baseweb="base-input"] > div {
+[data-testid="stForm"] [data-baseweb="base-input"] > div,
+[data-testid="stForm"] [data-baseweb="input"] > div > div,
+[data-testid="stForm"] [data-testid="stTextInput"] > div,
+[data-testid="stForm"] [data-testid="stTextInput"] > div > div {
     background: #1f3147 !important;
+    background-color: #1f3147 !important;
     border-color: rgba(255,255,255,0.22) !important;
     border-radius: 8px !important;
 }
-/* El <input> real: texto blanco, cursor visible */
+/* El <input> real: FORZAMOS fondo oscuro tambien (no solo transparent)
+   para que en cualquier version de Streamlit siempre haya fondo oscuro
+   bajo el texto blanco. Sin esto Chrome puede pintar el input con su
+   default blanco y el texto blanco se hace invisible. */
 [data-testid="stForm"] input,
 [data-testid="stForm"] input[type="text"],
 [data-testid="stForm"] input[type="password"] {
-    background: transparent !important;
+    background: #1f3147 !important;
+    background-color: #1f3147 !important;
     color: #ffffff !important;
     -webkit-text-fill-color: #ffffff !important;
     caret-color: #ffffff !important;
     font-size: 1rem !important;
+    color-scheme: dark !important;
 }
 [data-testid="stForm"] input::placeholder {
     color: rgba(255,255,255,0.5) !important;
@@ -2111,13 +2124,18 @@ header[data-testid="stHeader"]    { background: transparent !important; box-shad
     border-color: #4FC3F7 !important;
     box-shadow: 0 0 0 2px rgba(79,195,247,0.28) !important;
 }
-/* Autofill (Chrome/Edge): mantener fondo oscuro y texto blanco */
+/* Autofill (Chrome/Edge/Safari): mantener fondo oscuro y texto blanco.
+   Cubrimos los tres estados para que no pinte fondo blanco. */
 [data-testid="stForm"] input:-webkit-autofill,
 [data-testid="stForm"] input:-webkit-autofill:hover,
-[data-testid="stForm"] input:-webkit-autofill:focus {
+[data-testid="stForm"] input:-webkit-autofill:focus,
+[data-testid="stForm"] input:-webkit-autofill:active {
     -webkit-box-shadow: 0 0 0 1000px #1f3147 inset !important;
+    box-shadow: 0 0 0 1000px #1f3147 inset !important;
     -webkit-text-fill-color: #ffffff !important;
+    color: #ffffff !important;
     caret-color: #ffffff !important;
+    transition: background-color 5000s ease-in-out 0s !important;
 }
 /* Boton del "ojo" para mostrar contrasena: transparente y discreto */
 [data-testid="stForm"] [data-baseweb="input"] button,
