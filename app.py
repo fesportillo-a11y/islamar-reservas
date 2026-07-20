@@ -1621,6 +1621,27 @@ def asignar_aptos_auto(tipo_dorm: str, f_ent: date, f_sal: date,
             asignados.append(c)
     return asignados
 
+# Jerarquia de UPGRADE: cuando una reserva de un tipo no cabe, se
+# puede intentar colocar en un tipo SUPERIOR (mas grande, mismo o mayor
+# precio). Nunca al reves (nunca "downgrade" automatico).
+#   Estudio → 1 DORM → 2 DORM
+TIPOS_UPGRADE = {
+    "Estudio": ["1", "2"],
+    "1":       ["2"],
+    "2":       [],
+}
+
+def _tipo_desde_apto(apto: str) -> str:
+    """Devuelve '1', '2' o 'Estudio' segun el nombre del apartamento."""
+    a = str(apto or "").upper()
+    if "ESTUDIO" in a:
+        return "Estudio"
+    if "2 DORM" in a:
+        return "2"
+    if "1 DORM" in a:
+        return "1"
+    return "1"
+
 def reorganizar_asignacion_tipo(
     tipo_dorm: str,
     nuevas: list,
@@ -1736,6 +1757,147 @@ def reorganizar_asignacion_tipo(
     if _rec(0):
         return asignacion
     return None
+
+
+def reorganizar_con_upgrade(
+    tipo_dorm: str,
+    nuevas: list,
+    df_existentes,
+) -> "tuple[dict | None, set]":
+    """Variante mejorada de `reorganizar_asignacion_tipo` que, si no logra
+    colocar todas las reservas dentro del tipo pedido, intenta ampliar el
+    pool a tipos SUPERIORES según TIPOS_UPGRADE.
+
+    Devuelve:
+        (asignacion_dict, set_de_keys_upgradedas)
+        (None, set()) si tampoco cabe con upgrade.
+
+    Las reservas EXISTENTES en aptos de tipo superior NUNCA se mueven a
+    aptos de tipo inferior (no hay downgrades automaticos). Las nuevas
+    reservas prefieren mantenerse en su tipo original si es posible.
+    """
+    # 1º Intento: solo tipo estricto (comportamiento actual)
+    r1 = reorganizar_asignacion_tipo(tipo_dorm, nuevas, df_existentes)
+    if r1 is not None:
+        return r1, set()
+
+    # 2º Intento: pool ampliado con tipos superiores
+    tipos_ups = TIPOS_UPGRADE.get(tipo_dorm, [])
+    if not tipos_ups:
+        return None, set()
+
+    aptos_originales = set(APTOS_POR_TIPO.get(tipo_dorm, []))
+    aptos_pool = list(aptos_originales)
+    for t_sup in tipos_ups:
+        for a in APTOS_POR_TIPO.get(t_sup, []):
+            if a not in aptos_pool:
+                aptos_pool.append(a)
+
+    # Recopilar reservas: nuevas + existentes de CUALQUIER tipo del pool
+    reservas = []
+    for nueva in nuevas:
+        reservas.append({
+            "key":       nueva["key"],
+            "es_nueva":  True,
+            "f_ent":     nueva["f_ent"],
+            "f_sal":     nueva["f_sal"],
+            "apto_pref": nueva.get("apto_pref", ""),
+            "tipo_orig": tipo_dorm,
+        })
+    for _, r in df_existentes.iterrows():
+        apto_r = str(r.get("apartamento", "") or "").strip()
+        if apto_r not in aptos_pool:
+            continue
+        if es_cancelada(r.get("estado_pago", "")):
+            continue
+        f_e = parse_date_safe(r.get("entrada", ""))
+        f_s = parse_date_safe(r.get("salida", ""))
+        if not f_e or not f_s:
+            continue
+        try:
+            rid = int(r["id"])
+        except Exception:
+            continue
+        reservas.append({
+            "key":       rid,
+            "es_nueva":  False,
+            "f_ent":     f_e,
+            "f_sal":     f_s,
+            "apto_pref": apto_r,
+            "tipo_orig": _tipo_desde_apto(apto_r),
+        })
+
+    # Filtrar por solape con las nuevas (margen 60 dias)
+    if nuevas:
+        from datetime import timedelta as _td
+        f_min = min(n["f_ent"] for n in nuevas) - _td(days=60)
+        f_max = max(n["f_sal"] for n in nuevas) + _td(days=60)
+        reservas = [x for x in reservas
+                    if x["f_ent"] < f_max and x["f_sal"] > f_min]
+
+    if not reservas:
+        return {}, set()
+
+    reservas.sort(key=lambda x: (x["f_ent"], x["f_sal"]))
+
+    # Aptos permitidos para cada reserva: su tipo original + upgrades.
+    # NUNCA downgrade (una reserva de 2 DORM no baja a 1 DORM).
+    def _aptos_validos(r):
+        tipos_ok = [r["tipo_orig"]]
+        tipos_ok.extend(TIPOS_UPGRADE.get(r["tipo_orig"], []))
+        aptos_ok = []
+        for t in tipos_ok:
+            for a in APTOS_POR_TIPO.get(t, []):
+                if a not in aptos_ok:
+                    aptos_ok.append(a)
+        return aptos_ok
+
+    def _solapa(a, b):
+        return a["f_ent"] < b["f_sal"] and a["f_sal"] > b["f_ent"]
+
+    asignacion = {}
+    intentos   = [0]
+    MAX_INT    = 40000
+
+    def _rec(idx: int) -> bool:
+        if intentos[0] > MAX_INT:
+            return False
+        intentos[0] += 1
+        if idx == len(reservas):
+            return True
+        r = reservas[idx]
+        candidatos = _aptos_validos(r)
+        # Preferir su apto_pref (mantener las cosas quietas cuando se pueda)
+        if r["apto_pref"] and r["apto_pref"] in candidatos:
+            candidatos = [r["apto_pref"]] + [a for a in candidatos if a != r["apto_pref"]]
+        for apto in candidatos:
+            hay_conflicto = False
+            for prev in reservas[:idx]:
+                if asignacion.get(prev["key"]) == apto and _solapa(r, prev):
+                    hay_conflicto = True
+                    break
+            if hay_conflicto:
+                continue
+            asignacion[r["key"]] = apto
+            if _rec(idx + 1):
+                return True
+            del asignacion[r["key"]]
+        return False
+
+    if not _rec(0):
+        return None, set()
+
+    # Detectar upgrades: reservas cuyo tipo final != tipo original
+    upgrades = set()
+    for r in reservas:
+        apto_final = asignacion.get(r["key"])
+        if not apto_final:
+            continue
+        tipo_final = _tipo_desde_apto(apto_final)
+        if tipo_final != r["tipo_orig"]:
+            upgrades.add(r["key"])
+    return asignacion, upgrades
+
 
 # ─────────────────────────────────────────────
 # CONEXIÓN SUPABASE
@@ -3355,15 +3517,17 @@ elif seccion == "➕ Nueva reserva":
                     "f_sal":     salida,
                     "apto_pref": apartamento,
                 }]
-                asignacion_nr = reorganizar_asignacion_tipo(
+                asignacion_nr, keys_upgrade_nr = reorganizar_con_upgrade(
                     dormitorios, nuevas_nr, df_fresh_nr
                 )
                 if asignacion_nr is None:
                     st.error(
                         f"⛔ **No hay disponibilidad real** para colocar esta "
                         f"reserva. Se probó reorganizando las reservas "
-                        f"existentes del tipo **{dormitorios}** y aun así no "
-                        f"encaja en las fechas {entrada.strftime('%d/%m/%Y')} → "
+                        f"existentes del tipo **{dormitorios}** e incluso "
+                        f"considerando upgrades a apartamentos de tipo "
+                        f"superior, y aun así no encaja en las fechas "
+                        f"{entrada.strftime('%d/%m/%Y')} → "
                         f"{salida.strftime('%d/%m/%Y')}. Elimina o modifica "
                         f"alguna reserva existente para liberar hueco."
                     )
@@ -3377,39 +3541,57 @@ elif seccion == "➕ Nueva reserva":
                                 apto_ant = str(fila_bd.iloc[0].get("apartamento", "") or "").strip()
                                 if apto_ant and apto_ant != apto_nuevo:
                                     reasignaciones_nr.append({
-                                        "id":       key,
-                                        "cliente":  str(fila_bd.iloc[0].get("nombre", "") or ""),
-                                        "apto_ant": apto_ant,
-                                        "apto_new": apto_nuevo,
+                                        "id":         key,
+                                        "cliente":    str(fila_bd.iloc[0].get("nombre", "") or ""),
+                                        "apto_ant":   apto_ant,
+                                        "apto_new":   apto_nuevo,
+                                        "es_upgrade": key in keys_upgrade_nr,
                                     })
-                    # Ajustar el apto final de la nueva reserva
-                    datos["apartamento"] = asignacion_nr.get("__nueva_manual", apartamento)
+                    # Ajustar el apto final de la nueva reserva. Si termino
+                    # en un tipo superior, actualizar tambien `dormitorios`.
+                    apto_final_nueva = asignacion_nr.get("__nueva_manual", apartamento)
+                    datos["apartamento"] = apto_final_nueva
+                    if "__nueva_manual" in keys_upgrade_nr:
+                        datos["dormitorios"] = _tipo_desde_apto(apto_final_nueva)
                     # Aplicar
                     n_ok = 0
                     for r in reasignaciones_nr:
                         try:
-                            actualizar_reserva(int(r["id"]),
-                                               {"apartamento": r["apto_new"]})
+                            update_payload = {"apartamento": r["apto_new"]}
+                            if r["es_upgrade"]:
+                                update_payload["dormitorios"] = _tipo_desde_apto(r["apto_new"])
+                            actualizar_reserva(int(r["id"]), update_payload)
                             n_ok += 1
                         except Exception:
                             pass
                     guardar_reserva(datos)
-                    if reasignaciones_nr:
-                        detalle = "\n".join(
-                            f"- **{r['cliente']}**: {r['apto_ant']} → {r['apto_new']}"
-                            for r in reasignaciones_nr
+                    # Mensaje al usuario con marca de upgrade si aplica
+                    lineas_detalle = []
+                    for r in reasignaciones_nr:
+                        prefijo = "⬆️" if r["es_upgrade"] else "🔀"
+                        lineas_detalle.append(
+                            f"- {prefijo} **{r['cliente']}**: {r['apto_ant']} → {r['apto_new']}"
                         )
+                    upgrade_nueva = "__nueva_manual" in keys_upgrade_nr
+                    aviso_nueva = ""
+                    if upgrade_nueva:
+                        aviso_nueva = (
+                            f" (⬆️ **upgrade** — se pedía tipo "
+                            f"**{dormitorios}** pero no había libre; se le "
+                            f"asigna un apartamento de tipo superior)"
+                        )
+                    if reasignaciones_nr:
+                        detalle = "\n".join(lineas_detalle)
                         st.success(
                             f"✅ Reserva de **{nombre}** guardada en "
-                            f"**{datos['apartamento']}**.\n\n"
+                            f"**{datos['apartamento']}**{aviso_nueva}.\n\n"
                             f"🔀 Se han **reorganizado {n_ok} reserva(s) "
-                            f"existente(s)** del tipo {dormitorios} para hacer "
-                            f"sitio:\n\n{detalle}"
+                            f"existente(s)** para hacer sitio:\n\n{detalle}"
                         )
                     else:
                         st.success(
                             f"✅ Reserva de **{nombre}** guardada en "
-                            f"**{datos['apartamento']}**."
+                            f"**{datos['apartamento']}**{aviso_nueva}."
                         )
                     st.cache_resource.clear()
                     st.rerun()
@@ -5474,9 +5656,13 @@ elif seccion == "📥 Importar Booking":
                             "apto_pref": "",
                         })
                 for tipo, nuevas_grp in by_tipo.items():
-                    asignacion = reorganizar_asignacion_tipo(tipo, nuevas_grp, df)
+                    # Intentamos reorganizar CON upgrade automatico si es
+                    # necesario. Devuelve (asignacion, set_upgrades).
+                    asignacion, keys_upgrade = reorganizar_con_upgrade(
+                        tipo, nuevas_grp, df
+                    )
                     if asignacion is None:
-                        # No hay distribución válida ni reorganizando
+                        # No hay distribución válida ni upgradeando
                         for nueva in nuevas_grp:
                             reservas_sin_hueco.append({
                                 "idx_fila": nueva["idx_fila"],
@@ -5486,12 +5672,14 @@ elif seccion == "📥 Importar Booking":
                                 "salida":   filas[nueva["idx_fila"]].get("salida", ""),
                             })
                         continue
-                    # 1) Aplicar el apto a las NUEVAS filas del import
+                    # 1) Aplicar el apto a las NUEVAS filas del import.
+                    #    Si acaban en un tipo superior (upgrade), tambien
+                    #    actualizamos el campo `dormitorios` para coherencia.
                     for nueva in nuevas_grp:
                         nuevo_apto = asignacion.get(nueva["key"], "")
                         if nuevo_apto:
                             filas[nueva["idx_fila"]]["apartamento"] = nuevo_apto
-                            filas[nueva["idx_fila"]]["dormitorios"] = tipo
+                            filas[nueva["idx_fila"]]["dormitorios"] = _tipo_desde_apto(nuevo_apto)
                     # 2) Detectar reasignaciones a reservas EXISTENTES en BD
                     for key, apto_nuevo in asignacion.items():
                         if isinstance(key, int):  # id de BD
@@ -5499,6 +5687,7 @@ elif seccion == "📥 Importar Booking":
                             if not fila_bd.empty:
                                 apto_ant = str(fila_bd.iloc[0].get("apartamento", "") or "").strip()
                                 if apto_ant and apto_ant != apto_nuevo:
+                                    es_upgrade = key in keys_upgrade
                                     reasignaciones_bd.append({
                                         "id":         key,
                                         "cliente":    str(fila_bd.iloc[0].get("nombre", "") or ""),
@@ -5506,6 +5695,7 @@ elif seccion == "📥 Importar Booking":
                                         "apto_nuevo": apto_nuevo,
                                         "entrada":    str(fila_bd.iloc[0].get("entrada", "") or ""),
                                         "salida":     str(fila_bd.iloc[0].get("salida", "") or ""),
+                                        "es_upgrade": es_upgrade,
                                     })
 
             df_bk = pd.DataFrame(filas) if filas else pd.DataFrame()
@@ -5695,19 +5885,26 @@ elif seccion == "📥 Importar Booking":
             # usuario los confirme antes de aplicarlos en BD.
             if reasignaciones_bd:
                 st.markdown("---")
+                n_upgr = sum(1 for r in reasignaciones_bd if r.get("es_upgrade"))
+                aviso_upgrade = (
+                    f"\n\n⬆️ **{n_upgr}** de esas reasignaciones son "
+                    f"**UPGRADES** (una reserva pasa a un apartamento de tipo "
+                    f"superior — típicamente 1 DORM → 2 DORM — porque no había "
+                    f"otra forma de que todas encajaran)."
+                ) if n_upgr else ""
                 st.warning(
                     f"🔀 **Reorganización automática**: para poder ubicar las "
                     f"nuevas reservas del Excel, hay que **mover {len(reasignaciones_bd)} "
-                    f"reserva(s) ya guardadas** a otro apartamento del mismo "
-                    f"tipo. El cliente, las fechas y todo lo demás se mantienen "
-                    f"igual — solo cambia el apartamento asignado."
+                    f"reserva(s) ya guardadas** a otro apartamento. El cliente, "
+                    f"las fechas y todo lo demás se mantienen igual — solo "
+                    f"cambia el apartamento asignado." + aviso_upgrade
                 )
                 df_reasig_auto = pd.DataFrame([{
                     "Cliente":    r["cliente"],
                     "Entrada":    r["entrada"],
                     "Salida":     r["salida"],
                     "Antes":      r["apto_ant"],
-                    "→":          "→",
+                    "→":          "⬆️ →" if r.get("es_upgrade") else "→",
                     "Después":    r["apto_nuevo"],
                 } for r in reasignaciones_bd])
                 st.dataframe(df_reasig_auto, use_container_width=True,
@@ -5717,7 +5914,7 @@ elif seccion == "📥 Importar Booking":
                                  "Entrada":  st.column_config.TextColumn(width=95),
                                  "Salida":   st.column_config.TextColumn(width=95),
                                  "Antes":    st.column_config.TextColumn(width=170),
-                                 "→":        st.column_config.TextColumn(width=30),
+                                 "→":        st.column_config.TextColumn(width=45),
                                  "Después":  st.column_config.TextColumn(width=170),
                              })
                 if st.button(
