@@ -1726,6 +1726,58 @@ def reorganizar_asignacion_tipo(
 
     asignacion  = {}
     intentos    = [0]
+
+    def _score_continuidad(apto, r_actual, asignacion_actual):
+        """Puntua la afinidad de colocar r_actual en `apto`, para que el
+        backtracking prefiera consolidar la ocupacion en un mismo apto
+        antes que abrir otro vacio. Escala:
+
+          +100  Back-to-back exacto: alguna reserva vinculada al mismo
+                apto (ya asignada, o con apto_pref == apto y aun no
+                procesada) tiene check-out == check-in de r_actual, o
+                check-in == check-out de r_actual. Continuidad perfecta.
+          +50   Gap-fit: r_actual queda comprendida entre dos reservas
+                vinculadas al mismo apto (una acaba antes o el mismo dia
+                que r_actual entra, otra empieza despues o el mismo dia
+                que r_actual sale). Rellena hueco por ambos lados.
+          +25   Proximidad (≤30 dias) por un solo lado. Prefiere apto
+                'con historia' frente a uno vacio.
+
+        Se consideran vinculadas al apto tanto las reservas ya asignadas
+        en el paso actual del backtracking como aquellas cuya asignacion
+        preferida (apto_pref) apunta a este apto — asi el score capta
+        vecinos que aun no se han procesado (las reservas se recorren en
+        orden de fecha de entrada).
+        """
+        s = 0
+        vecinos_izq_f = []
+        vecinos_der_f = []
+        for otra in reservas:
+            if otra["key"] == r_actual["key"]:
+                continue
+            asig = asignacion_actual.get(otra["key"])
+            vinculada = (asig == apto) or (asig is None and otra["apto_pref"] == apto)
+            if not vinculada:
+                continue
+            if otra["f_sal"] == r_actual["f_ent"]:
+                s += 100  # encadena a la izquierda
+            elif otra["f_ent"] == r_actual["f_sal"]:
+                s += 100  # encadena a la derecha
+            if otra["f_sal"] <= r_actual["f_ent"]:
+                vecinos_izq_f.append(otra["f_sal"])
+            elif otra["f_ent"] >= r_actual["f_sal"]:
+                vecinos_der_f.append(otra["f_ent"])
+        if vecinos_izq_f and vecinos_der_f:
+            s += 50   # gap-fit: hueco cerrado por ambos lados
+        elif vecinos_izq_f or vecinos_der_f:
+            if vecinos_izq_f:
+                dist = (r_actual["f_ent"] - max(vecinos_izq_f)).days
+            else:
+                dist = (min(vecinos_der_f) - r_actual["f_sal"]).days
+            if 0 <= dist <= 30:
+                s += 25
+        return s
+
     def _rec(idx: int) -> bool:
         if intentos[0] > max_intentos:
             return False
@@ -1733,14 +1785,21 @@ def reorganizar_asignacion_tipo(
         if idx == len(reservas):
             return True
         r = reservas[idx]
-        # Probamos primero su apto_pref para minimizar cambios,
-        # y despues el resto de aptos del tipo.
-        candidatos = list(aptos)
-        if r["apto_pref"] and r["apto_pref"] in candidatos:
-            candidatos.remove(r["apto_pref"])
-            candidatos.insert(0, r["apto_pref"])
+        # Ordenamos candidatos por: (1) su apto_pref primero, (2) score
+        # de continuidad descendente, (3) orden original de la lista.
+        def _sort_key(apto):
+            es_pref = (r["apto_pref"] == apto)
+            cont    = _score_continuidad(apto, r, asignacion)
+            idx_alf = aptos.index(apto) if apto in aptos else 999
+            # Menor tupla = primero. Preferimos:
+            # - es_pref = True  → 0, False → 1
+            # - continuidad alta → -cont
+            # - alfabético para desempate
+            return (0 if es_pref else 1, -cont, idx_alf)
+
+        candidatos = sorted(aptos, key=_sort_key)
+
         for apto in candidatos:
-            # Verificar que no solapa con ninguna reserva ya asignada al mismo apto
             hay_conflicto = False
             for prev in reservas[:idx]:
                 if asignacion.get(prev["key"]) == apto and _solapa(r, prev):
@@ -3517,19 +3576,21 @@ elif seccion == "➕ Nueva reserva":
                     "f_sal":     salida,
                     "apto_pref": apartamento,
                 }]
-                asignacion_nr, keys_upgrade_nr = reorganizar_con_upgrade(
+                asignacion_nr = reorganizar_asignacion_tipo(
                     dormitorios, nuevas_nr, df_fresh_nr
                 )
+                keys_upgrade_nr = set()  # tipologia estricta, sin upgrades
                 if asignacion_nr is None:
                     st.error(
-                        f"⛔ **No hay disponibilidad real** para colocar esta "
-                        f"reserva. Se probó reorganizando las reservas "
-                        f"existentes del tipo **{dormitorios}** e incluso "
-                        f"considerando upgrades a apartamentos de tipo "
-                        f"superior, y aun así no encaja en las fechas "
+                        f"⛔ **No hay disponibilidad** en apartamentos de "
+                        f"**tipo {dormitorios}** para las fechas "
                         f"{entrada.strftime('%d/%m/%Y')} → "
-                        f"{salida.strftime('%d/%m/%Y')}. Elimina o modifica "
-                        f"alguna reserva existente para liberar hueco."
+                        f"{salida.strftime('%d/%m/%Y')}. Se probó "
+                        f"reorganizando las reservas existentes del mismo "
+                        f"tipo y aun así no encaja. Elimina o modifica "
+                        f"alguna reserva existente del mismo tipo, o "
+                        f"considera manualmente asignar un apartamento "
+                        f"de otro tipo desde el desplegable."
                     )
                 else:
                     # Aplicar reasignaciones a existentes y crear la nueva
@@ -4609,9 +4670,10 @@ elif seccion == "📅 Plantilla mensual":
                     df_sin_estas = df_fresh_auto[
                         ~df_fresh_auto["id"].astype(int).isin(ids_a_asignar)
                     ]
-                    asig_pm, keys_up_pm = reorganizar_con_upgrade(
+                    asig_pm = reorganizar_asignacion_tipo(
                         tipo_pm, nuevas_pm, df_sin_estas,
                     )
+                    keys_up_pm = set()  # tipologia estricta
                     if asig_pm is None:
                         for nueva in nuevas_pm:
                             sin_hueco_finales.append(nueva["cliente"])
@@ -5804,11 +5866,15 @@ elif seccion == "📥 Importar Booking":
                             "apto_pref": "",
                         })
                 for tipo, nuevas_grp in by_tipo.items():
-                    # Intentamos reorganizar CON upgrade automatico si es
-                    # necesario. Devuelve (asignacion, set_upgrades).
-                    asignacion, keys_upgrade = reorganizar_con_upgrade(
+                    # Reorganizacion ESTRICTA: respeta la tipologia. Los
+                    # apartamentos de 1 DORM solo se reasignan a otros 1
+                    # DORM, etc. Nunca hay upgrade automatico de tipo. Si
+                    # no cabe estrictamente, se avisa al usuario y la
+                    # reserva queda pendiente de asignacion manual.
+                    asignacion = reorganizar_asignacion_tipo(
                         tipo, nuevas_grp, df
                     )
+                    keys_upgrade = set()  # no hay upgrades automaticos
                     if asignacion is None:
                         # No hay distribución válida ni upgradeando
                         for nueva in nuevas_grp:
