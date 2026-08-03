@@ -56,16 +56,16 @@ APTOS = [
     "APTO 201 - 1 DORM", "APTO 208 - 1 DORM", "APTO 209 - 1 DORM",
     "APTO 7 - 2 DORM", "APTO 14 - 2 DORM", "APTO 15 - 2 DORM",
     # ── Apartamentos JUANMA ───────────────────
-    "APTO 215 - 2 DORM", "ESTUDIO 105", "ESTUDIO 217",
+    "APTO 215 - 2 DORM", "ESTUDIO 105", "ESTUDIO 216", "ESTUDIO 217",
 ]
 
-APTOS_JUANMA = {"APTO 215 - 2 DORM", "ESTUDIO 105", "ESTUDIO 217"}
+APTOS_JUANMA = {"APTO 215 - 2 DORM", "ESTUDIO 105", "ESTUDIO 216", "ESTUDIO 217"}
 
 # Apartamentos que YA NO se ofrecen pero que pueden aparecer en reservas
 # antiguas. Aqui los listamos para no perderlos como "huerfanos": el panel
 # de "reservas sin apto valido" de la Plantilla mensual los detecta y permite
 # reasignarlas.
-APTOS_DEPRECATED = {"ESTUDIO 216"}
+APTOS_DEPRECATED = set()
 
 # Apartamentos agrupados por tipo de dormitorio
 APTOS_POR_TIPO = {
@@ -4511,8 +4511,8 @@ elif seccion == "📅 Plantilla mensual":
 
     # ── Aviso: reservas sin apartamento válido que solapan con el rango ─
     # Detecta reservas en BD que afectan al rango y NO tienen un apto
-    # valido (vacio, NaN o un apto deprecado como "ESTUDIO 216" que ya
-    # no existe en APTOS). Permite reasignarlas en linea desde el panel.
+    # valido (vacio, NaN o un apto deprecado que ya no existe en APTOS).
+    # Permite reasignarlas en linea desde el panel.
     if not df.empty:
         filas_sin_apto = []
         for _, r in df.iterrows():
@@ -4550,8 +4550,8 @@ elif seccion == "📅 Plantilla mensual":
             n_dep = sum(1 for r in filas_sin_apto
                         if r["Apto anterior"].lstrip("⚠️ ").strip() in APTOS_DEPRECATED)
             msg_dep = (f" De ellas, **{n_dep}** estaban en un apartamento "
-                       f"que ya no se ofrece (deprecado, ej. ESTUDIO 216) y "
-                       f"hay que reubicarlas." if n_dep else "")
+                       f"que ya no se ofrece (deprecado) y hay que "
+                       f"reubicarlas." if n_dep else "")
             st.warning(
                 f"⚠️ **{len(filas_sin_apto)} reserva(s) sin apartamento válido** "
                 f"afectan a este rango y no se muestran en el calendario.{msg_dep} "
