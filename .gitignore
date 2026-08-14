@@ -5,3 +5,10 @@ __pycache__/
 .env
 cargar_datos_iniciales.py
 datos_iniciales.json
+
+# Playwright — recordings crudos y navegadores locales
+*.codegen.ts
+node_modules/
+playwright-report/
+test-results/
+
