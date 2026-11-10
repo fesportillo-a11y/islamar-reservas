@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Norte</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="./src/styles.css">
+</head>
+<body>
+  <header>
+    <div class="wrap hrow">
+      <div class="brand">
+        <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="#04231b" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 15 12l-3 9-3-9Z"/></svg></span>Norte
+      </div>
+      <button class="hbtn" id="themeBtn" title="Cambiar tema" aria-label="Cambiar tema">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <!-- RESUMEN -->
+    <div class="view" id="v-resumen">
+      <section class="hero">
+        <span class="lbl">Patrimonio total</span>
+        <div class="big num" id="net">—</div>
+        <div class="delta" id="netDelta"></div>
+      </section>
+      <section>
+        <div class="sec-h"><h2>Pulso</h2><span class="eyebrow">Salud financiera</span></div>
+        <div class="pulse">
+          <div class="ring">
+            <svg viewBox="0 0 120 120" width="112" height="112">
+              <circle cx="60" cy="60" r="50" fill="none" stroke="var(--surface-2)" stroke-width="11"/>
+              <circle id="pulseArc" cx="60" cy="60" r="50" fill="none" stroke="var(--spring)" stroke-width="11" stroke-linecap="round" stroke-dasharray="314" stroke-dashoffset="314" transform="rotate(-90 60 60)"/>
+            </svg>
+            <div class="c"><b class="num" id="pulseNum">—</b><span>de 100</span></div>
+          </div>
+          <div class="pm"><span class="tag" id="pulseTag">—</span><p id="pulseMsg"></p></div>
+        </div>
+      </section>
+      <section>
+        <div class="sec-h"><h2>Tus cuentas</h2><button class="link" data-go="cuentas">Ver todas</button></div>
+        <div id="miniAcct"></div>
+      </section>
+      <section>
+        <div class="sec-h"><h2>Avisos</h2><span class="eyebrow" id="alertCount"></span></div>
+        <div id="alerts"></div>
+      </section>
+      <section>
+        <div class="sec-h"><h2>Próximos recibos</h2><span class="eyebrow">30 días</span></div>
+        <div id="bills"></div>
+      </section>
+    </div>
+
+    <!-- MOVIMIENTOS -->
+    <div class="view" id="v-movimientos" hidden>
+      <section>
+        <div class="tools">
+          <label class="search">
+            <svg class="i" viewBox="0 0 24 24" stroke="var(--muted)"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+            <input id="q" placeholder="Buscar movimiento…" autocomplete="off">
+          </label>
+        </div>
+        <div class="tools" id="catFilter"></div>
+        <div id="movList"></div>
+      </section>
+    </div>
+
+    <!-- ANÁLISIS -->
+    <div class="view" id="v-analisis" hidden>
+      <section>
+        <div class="sec-h"><h2>Este mes</h2><span class="eyebrow" id="anMonth"></span></div>
+        <div class="inout">
+          <div class="io"><div class="k">Ingresos</div><div class="v up num" id="anIn">—</div></div>
+          <div class="io"><div class="k">Gastos</div><div class="v down num" id="anOut">—</div></div>
+        </div>
+      </section>
+      <section>
+        <div class="sec-h"><h2>Gastos por categoría</h2></div>
+        <div class="donut-wrap">
+          <div class="donut"><canvas id="donut" width="320" height="320"></canvas>
+            <div class="center"><b class="num" id="donutTot">—</b><span>gasto total</span></div>
+          </div>
+          <div class="legend" id="legend"></div>
+        </div>
+      </section>
+      <section>
+        <div class="sec-h"><h2>Evolución del gasto</h2><span class="eyebrow">últimos meses</span></div>
+        <div class="bars" id="bars"></div>
+      </section>
+    </div>
+
+    <!-- CUENTAS -->
+    <div class="view" id="v-cuentas" hidden>
+      <section>
+        <div class="sec-h"><h2>Cuentas y tarjetas</h2></div>
+        <div id="fullAcct"></div>
+      </section>
+    </div>
+
+    <!-- IMPORTAR -->
+    <div class="view" id="v-importar" hidden>
+      <section>
+        <div class="sec-h"><h2>Importar extracto</h2></div>
+        <p class="note">Sube el CSV de tu banco. Todo se queda en este equipo; no compartes claves con nadie.</p>
+        <div class="drop" id="drop" style="margin-top:12px">
+          <svg class="i" viewBox="0 0 24 24" stroke="currentColor"><path d="M12 15V3"/><path d="M8 7l4-4 4 4"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>
+          <div style="font-family:var(--f-head);font-weight:600;margin-top:8px">Pulsa o arrastra tu CSV</div>
+          <p>o <button class="link" id="loadDemo">cargar datos de ejemplo</button></p>
+        </div>
+        <input type="file" id="file" accept=".csv,text/csv" hidden>
+        <p class="note" style="margin-top:14px">Formato esperado (separador coma o punto y coma):</p>
+        <code class="fmt">fecha,concepto,importe,categoria
+2026-11-08,Supermercado,-54.20,Alimentación
+2026-11-05,Nómina,1850.00,Nómina
+2026-11-03,Suscripción vídeo,-13.99,Suscripciones</code>
+        <p class="note" style="margin-top:8px">Importe negativo = gasto, positivo = ingreso. La categoría es opcional: si falta, Norte la deduce.</p>
+        <div style="margin-top:16px">
+          <button class="btn danger" id="reset">Borrar todos mis datos</button>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <nav><div class="nav-in" id="nav"></div></nav>
+  <div class="toast" id="toast"></div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

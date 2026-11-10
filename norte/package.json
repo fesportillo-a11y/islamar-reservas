@@ -1,0 +1,18 @@
+{
+  "name": "norte",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Norte — finanzas personales que funcionan en tu equipo, sin dar tus claves a nadie.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "dexie": "4.0.11"
+  },
+  "devDependencies": {
+    "vite": "5.4.20"
+  }
+}
